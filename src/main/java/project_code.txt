@@ -1,0 +1,1668 @@
+
+
+===== .\project_code.txt =====
+
+
+
+===== .\com\divya\linkedinclone\LinkedinApplication.java =====
+
+package com.divya.linkedinclone;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
+@SpringBootApplication
+@EnableJpaAuditing // Enable JPA auditing
+public class LinkedinApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(LinkedinApplication.class, args);
+	}
+
+}
+
+===== .\config\GlobalExceptionHandler.java =====
+
+package com.divya.linkedinclone.config;
+import com.divya.linkedinclone.exception.CommentNotFoundException;
+import com.divya.linkedinclone.exception.ProfileNotFoundException;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@ControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(ProfileNotFoundException.class)
+    public ResponseEntity<?> handleProfileNotFoundException(ProfileNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<?> handleUserNotFoundException(UserNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<?> handleValidationExceptions(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = new HashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(error ->
+                errors.put(error.getField(), error.getDefaultMessage()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
+    }
+
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<?> handleRuntimeException(RuntimeException ex) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(PostNotFoundException.class)
+    public ResponseEntity<?> handlePostNotFoundException(PostNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(CommentNotFoundException.class)
+    public ResponseEntity<?> handleCommentNotFoundException(CommentNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
+}
+
+
+===== .\config\SecurityConfig.java =====
+
+package com.divya.linkedinclone.config;
+
+import com.divya.linkedinclone.filter.JwtRequestFilter;
+import com.divya.linkedinclone.service.CustomUserDetailsService;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+public class SecurityConfig {
+
+    private final JwtRequestFilter jwtRequestFilter;
+    private final CustomUserDetailsService userDetailsService;
+
+    public SecurityConfig(JwtRequestFilter jwtRequestFilter, CustomUserDetailsService userDetailsService) {
+        this.jwtRequestFilter = jwtRequestFilter;
+        this.userDetailsService = userDetailsService;
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .csrf(csrf -> csrf.disable()) // Disable CSRF protection
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers("/uploads/**").permitAll() // ✅ Allow public access to uploads
+                        .requestMatchers("/api/users/register", "/api/users/login").permitAll() // Public endpoints
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // Only admins can access /api/admin/**
+                        .requestMatchers("/api/user/**").hasAnyRole("USER", "ADMIN") // Both users and admins can access /api/user/**
+                        .anyRequest().authenticated() // All other endpoints require authentication
+                )
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS) // Use stateless sessions
+                )
+                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+        return http.build();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+        return authenticationConfiguration.getAuthenticationManager();
+    }
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+        authProvider.setUserDetailsService(userDetailsService);
+        authProvider.setPasswordEncoder(passwordEncoder());
+        return authProvider;
+    }
+}
+
+
+===== .\config\WebConfig.java =====
+
+package com.divya.linkedinclone.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+
+    @Value("${upload.directory}")
+    private String uploadDirectory;
+
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/uploads/**")
+                .addResourceLocations("file:" + uploadDirectory + "/");
+    }
+}
+
+===== .\controller\CommentController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.service.CommentService;
+import com.divya.linkedinclone.dto.CommentResponse;
+import com.divya.linkedinclone.entity.Comment;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.Map;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/comments")
+public class CommentController {
+
+    @Autowired
+    private CommentService commentService;
+
+    @PostMapping("/{postId}")
+    public ResponseEntity<CommentResponse> addComment(
+            @PathVariable Long postId,
+            @RequestParam Long userId,
+            @RequestBody Map<String, String> request
+    ) {
+        String content = request.get("content");
+        Comment comment = commentService.addComment(postId, userId, content);
+        CommentResponse response = new CommentResponse(comment);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @GetMapping("/{postId}")
+    public ResponseEntity<List<CommentResponse>> getCommentsByPostId(@PathVariable Long postId) {
+        List<Comment> comments = commentService.getCommentsByPostId(postId);
+        List<CommentResponse> responses = comments.stream()
+                .map(CommentResponse::new)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(responses);
+    }
+
+    @DeleteMapping("/{commentId}")
+    public ResponseEntity<?> deleteComment(@PathVariable Long commentId) {
+        try {
+            commentService.deleteComment(commentId);
+            return ResponseEntity.ok("Comment deleted successfully");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+}
+
+===== .\controller\LikeController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.entity.Like;
+import com.divya.linkedinclone.service.LikeService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import com.divya.linkedinclone.dto.LikeResponse;
+import java.util.Map; // Import for Map
+import com.divya.linkedinclone.exception.PostNotFoundException; // Import for PostNotFoundException
+@RestController
+@RequestMapping("/api/likes")
+public class LikeController {
+
+    @Autowired
+    private LikeService likeService;
+
+    @PostMapping("/{postId}")
+    public ResponseEntity<LikeResponse> toggleLike(
+            @PathVariable Long postId,
+            @RequestParam Long userId
+    ) {
+        LikeResponse response = likeService.toggleLike(postId, userId);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{postId}")
+    public ResponseEntity<?> getLikeCount(@PathVariable Long postId) {
+        try {
+            Long likeCount = likeService.getLikeCount(postId);
+            return ResponseEntity.ok(Map.of("postId", postId, "likeCount", likeCount));
+        } catch (PostNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+}
+
+===== .\controller\PostController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.dto.CreatePostRequest;
+import com.divya.linkedinclone.dto.PostResponse;
+import com.divya.linkedinclone.entity.Post;
+import com.divya.linkedinclone.service.PostService;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/posts")
+public class PostController {
+
+    @Autowired
+    private PostService postService;
+
+    // Create a new post
+    @PostMapping
+    public ResponseEntity<?> createPost(@RequestBody CreatePostRequest createPostRequest) {
+        try {
+            Post createdPost = postService.createPost(createPostRequest.getUserId(), createPostRequest.getContent());
+            return ResponseEntity.status(HttpStatus.CREATED).body(new PostResponse(createdPost));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Create a post with an image
+    @PostMapping("/image")
+    public ResponseEntity<?> createPostWithImage(
+            @RequestParam("userId") Long userId,
+            @RequestParam("content") String content,
+            @RequestParam("image") MultipartFile image) {
+        try {
+            Post createdPost = postService.createPostWithImage(userId, content, image);
+            return ResponseEntity.status(HttpStatus.CREATED).body(new PostResponse(createdPost));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (IOException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to upload image"));
+        }
+    }
+
+    // Get all posts by a user
+    @GetMapping("/users/{userId}/posts")
+    public ResponseEntity<?> getPostsByUserId(@PathVariable Long userId) {
+        try {
+            List<Post> posts = postService.getPostsByUserId(userId);
+            List<PostResponse> postResponses = posts.stream()
+                    .map(PostResponse::new)
+                    .collect(Collectors.toList());
+            return ResponseEntity.ok(postResponses);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Get a specific post by ID
+    @GetMapping("/{postId}")
+    public ResponseEntity<?> getPostById(@PathVariable Long postId) {
+        try {
+            Post post = postService.getPostById(postId);
+            return ResponseEntity.ok(new PostResponse(post));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Get all posts
+    @GetMapping
+    public ResponseEntity<List<PostResponse>> getAllPosts() {
+        List<Post> posts = postService.getAllPosts();
+        List<PostResponse> postResponses = posts.stream()
+                .map(PostResponse::new)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(postResponses);
+    }
+
+    // Update a post
+    @PutMapping("/{postId}")
+    public ResponseEntity<?> updatePost(@PathVariable Long postId, @RequestBody Map<String, String> request) {
+        try {
+            String newContent = request.get("content"); // Get the new content from the request body
+            Post updatedPost = postService.updatePost(postId, newContent);
+            return ResponseEntity.ok(new PostResponse(updatedPost));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Delete a post by ID
+    @DeleteMapping("/{postId}")
+    public ResponseEntity<?> deletePost(@PathVariable Long postId) {
+        try {
+            postService.deletePost(postId);
+            return ResponseEntity.ok(Map.of("message", "Post deleted successfully!"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+}
+
+===== .\controller\ProfileController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import java.util.Optional;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import org.springframework.http.HttpStatus;
+import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.repository.ProfileRepository;
+import com.divya.linkedinclone.service.ProfileService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/profiles")
+public class ProfileController {
+
+    @Autowired
+    private ProfileService profileService;
+
+    @Autowired
+    private ProfileRepository profileRepository; // Autowire ProfileRepository
+
+    // Create or update a profile
+    @PostMapping("/{userId}")
+    public ResponseEntity<Profile> createOrUpdateProfile(@PathVariable Long userId, @RequestBody Profile profile) {
+        Profile savedProfile = profileService.createOrUpdateProfile(userId, profile);
+        return ResponseEntity.ok(savedProfile);
+    }
+
+    // Get profile by user ID
+    @GetMapping("/{userId}")
+    public ResponseEntity<?> getProfileByUserId(@PathVariable Long userId) {
+        Profile profile = profileService.getProfileByUserId(userId);
+        Map<String, Object> response = new HashMap<>();
+        response.put("id", profile.getId());
+        response.put("user", Map.of(
+                "id", profile.getUser().getId(),
+                "name", profile.getUser().getName(),
+                "email", profile.getUser().getEmail()
+        ));
+        response.put("bio", profile.getBio());
+        response.put("profilePicture", profile.getProfilePicture());
+        response.put("skills", profile.getSkills());
+        response.put("experience", profile.getExperience());
+        response.put("education", profile.getEducation());
+        response.put("location", profile.getLocation());
+        response.put("website", profile.getWebsite());
+        return ResponseEntity.ok(response);
+    }
+
+    // Get all profiles
+    @GetMapping
+    public ResponseEntity<List<Profile>> getAllProfiles() {
+        List<Profile> profiles = profileRepository.findAll();
+        return ResponseEntity.ok(profiles);
+    }
+
+    // Update a profile by ID
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateProfile(@PathVariable Long id, @RequestBody Profile updatedProfile) {
+        // Check if the profile exists
+        Optional<Profile> optionalProfile = profileRepository.findById(id);
+
+        if (optionalProfile.isPresent()) {
+            // Update the existing profile
+            Profile profile = optionalProfile.get();
+            profile.setBio(updatedProfile.getBio());
+            profile.setProfilePicture(updatedProfile.getProfilePicture());
+            profile.setSkills(updatedProfile.getSkills());
+            profile.setExperience(updatedProfile.getExperience());
+            profile.setEducation(updatedProfile.getEducation());
+            profile.setLocation(updatedProfile.getLocation());
+            profile.setWebsite(updatedProfile.getWebsite());
+
+            // Save the updated profile
+            Profile savedProfile = profileRepository.save(profile);
+            return ResponseEntity.ok(savedProfile);
+        } else {
+            // Return a 404 Not Found response if the profile doesn't exist
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Profile not found with id: " + id));
+        }
+    }
+
+    // Delete a profile by ID
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteProfile(@PathVariable Long id) {
+        profileService.deleteProfile(id);
+        return ResponseEntity.ok(Map.of("message", "Profile deleted successfully"));
+    }
+}
+
+===== .\controller\UserController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import java.util.HashMap;
+import java.util.Map;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import com.divya.linkedinclone.dto.LoginRequest;
+import com.divya.linkedinclone.dto.UserRegistrationRequest;
+import com.divya.linkedinclone.repository.UserRepository;
+import java.util.List;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.service.UserService;
+import com.divya.linkedinclone.util.JwtUtil;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.crypto.password.PasswordEncoder;
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    // Register a new user
+    @PostMapping("/register")
+    public ResponseEntity<?> registerUser(@Valid @RequestBody UserRegistrationRequest registrationRequest) {
+        User registeredUser = userService.registerUser(registrationRequest);
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "User registered successfully!");
+        response.put("userId", registeredUser.getId());
+        return ResponseEntity.ok(response);
+    }
+
+    // Login a user and return a JWT token
+    // In UserController.java
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest loginRequest) {
+        try {
+            // Authenticate the user
+            UsernamePasswordAuthenticationToken authToken =
+                    new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword());
+            authenticationManager.authenticate(authToken);
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid email or password");
+        }
+
+        // Load user details and generate a JWT token
+        final UserDetails userDetails = userService.loadUserByUsername(loginRequest.getEmail());
+        final String jwt = jwtUtil.generateToken(userDetails);
+
+        // Fetch the user ID
+        User user = userRepository.findByEmail(loginRequest.getEmail())
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + loginRequest.getEmail()));
+
+        // Return the response
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Login successful!");
+        response.put("userId", user.getId());
+        response.put("token", jwt);
+        return ResponseEntity.ok(response);
+    }
+    //get all user
+    @GetMapping
+    public ResponseEntity<List<User>> getAllUsers() {
+        List<User> users = userRepository.findAll();
+        return ResponseEntity.ok(users);
+    }
+    //Get a User by ID
+    @GetMapping("/{id}")
+    public ResponseEntity<User> getUserById(@PathVariable Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        return ResponseEntity.ok(user);
+    }
+    // Update a User (PUT /api/users/{id})
+    @PutMapping("/{id}")
+    public ResponseEntity<User> updateUser(@PathVariable Long id, @RequestBody User updatedUser) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        user.setName(updatedUser.getName());
+        user.setEmail(updatedUser.getEmail());
+        user.setPassword(passwordEncoder.encode(updatedUser.getPassword()));
+        userRepository.save(user);
+        return ResponseEntity.ok(user);
+    }
+    // Delete a User (DELETE /api/users/{id})
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteUser(@PathVariable Long id) {
+        userRepository.deleteById(id);
+        return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
+    }
+}
+
+===== .\dto\CommentResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import com.divya.linkedinclone.entity.Comment;
+import lombok.Getter;
+import lombok.Setter;
+import java.time.LocalDateTime;
+@Getter
+@Setter
+public class CommentResponse {
+    private Long id;
+    private String content;
+    private LocalDateTime createdAt;
+    private Long postId;
+    private Long userId;
+
+    public CommentResponse(Comment comment) {
+        this.id = comment.getId();
+        this.content = comment.getContent();
+        this.createdAt = comment.getCreatedAt();
+        this.postId = comment.getPost().getId();
+        this.userId = comment.getUser().getId();
+    }
+}
+
+===== .\dto\CreatePostRequest.java =====
+
+package com.divya.linkedinclone.dto;
+
+public class CreatePostRequest {
+    private String content;
+    private Long userId;
+
+    // Getters and Setters
+    public String getContent() {
+        return content;
+    }
+
+    public void setContent(String content) {
+        this.content = content;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
+    }
+}
+
+===== .\dto\LikeResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import lombok.Getter;
+import lombok.Setter;
+
+@Getter
+@Setter
+public class LikeResponse {
+    private Long postId;
+    private Long userId;
+    private Long likeCount;
+
+    public LikeResponse(Long postId, Long userId, Long likeCount) {
+        this.postId = postId;
+        this.userId = userId;
+        this.likeCount = likeCount;
+    }
+}
+
+===== .\dto\LoginRequest.java =====
+
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
+public class LoginRequest {
+
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    @NotBlank(message = "Password is required")
+    private String password;
+
+    // Getters and Setters
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+}
+
+===== .\dto\PostResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import com.divya.linkedinclone.entity.Post;
+import com.divya.linkedinclone.entity.User;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+public class PostResponse {
+    private Long id;
+    private String content;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private String imagePath;
+    private UserResponse user; // Include user details
+
+    @Getter
+    @Setter
+    public static class UserResponse {
+        private Long id;
+        private String name;
+        private String email;
+
+        public UserResponse(User user) {
+            this.id = user.getId();
+            this.name = user.getName();
+            this.email = user.getEmail();
+        }
+    }
+
+    public PostResponse(Post post) {
+        this.id = post.getId();
+        this.content = post.getContent();
+        this.createdAt = post.getCreatedAt();
+        this.updatedAt = post.getUpdatedAt();
+        this.imagePath = post.getImagePath();
+        this.user = new UserResponse(post.getUser()); // Include user details
+    }
+}
+
+===== .\dto\UserRegistrationRequest.java =====
+
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+// In UserRegistrationRequest.java
+public class UserRegistrationRequest {
+
+    @NotBlank(message = "Name is required")
+    private String name;
+
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    @NotBlank(message = "Password is required")
+    @Size(min = 8, message = "Password must be at least 8 characters long")
+    private String password;
+
+    // Getters and Setters
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+}
+
+===== .\entity\Comment.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "comments")
+@EntityListeners(AuditingEntityListener.class)
+public class Comment {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String content;
+
+    @CreatedDate
+    private LocalDateTime createdAt;
+
+    @ManyToOne
+    @JoinColumn(name = "post_id", nullable = false)
+    private Post post;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+}
+
+===== .\entity\Like.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "likes")
+public class Like {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "post_id", nullable = false)
+    private Post post;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+}
+
+===== .\entity\Post.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "posts")
+@EntityListeners(AuditingEntityListener.class) // Enable auditing
+public class Post {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String content;
+
+    @CreatedDate
+    private LocalDateTime createdAt; // Correct usage of @CreatedDate
+    @LastModifiedDate
+    private LocalDateTime updatedAt; // Correct usage of @LastModifiedDate
+    private String imagePath;
+
+    @ManyToOne
+    @JoinColumn(name = "user_id", nullable = false)
+    @JsonIgnore // Add this annotatio
+    private User user;
+}
+
+===== .\entity\Profile.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+@Entity
+@Getter
+@Setter
+@Table(name = "profiles")
+public class Profile {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String bio;
+    private String profilePicture; // Add this field
+    private String skills;
+    private String experience;
+    private String education;
+    private String location; // Add this field
+    private String website; // Add this field
+
+    // One-to-one relationship with User
+    @OneToOne
+    @JoinColumn(name = "user_id", referencedColumnName = "id")
+    @JsonIgnore // Add this annotation
+    private User user;
+}
+
+===== .\entity\User.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
+@Entity
+@Getter
+@Setter
+@ToString
+@Table(name = "users")
+public class User implements UserDetails {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @NotBlank(message = "Name is required")
+    private String name;
+
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    @NotBlank(message = "Password is required")
+    @Size(min = 8, message = "Password must be at least 8 characters long")
+    private String password;
+
+    // One-to-one relationship with Profile
+    @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonIgnore // Add this annotation
+    private Profile profile;
+
+    // One-to-many relationship with Post
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    private List<Post> posts;
+
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return Collections.emptyList();
+    }
+
+    @Override
+    public String getPassword() {
+        return this.password;
+    }
+
+    @Override
+    public String getUsername() {
+        return this.email;
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        User user = (User) o;
+        return id != null && id.equals(user.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
+}
+
+===== .\exception\CommentNotFoundException.java =====
+
+package com.divya.linkedinclone.exception;
+
+public class CommentNotFoundException extends RuntimeException {
+    public CommentNotFoundException(String message) {
+        super(message);
+    }
+}
+
+===== .\exception\PostNotFoundException.java =====
+
+package com.divya.linkedinclone.exception;
+
+public class PostNotFoundException extends RuntimeException {
+  public PostNotFoundException(String message) {
+    super(message);
+  }
+}
+
+===== .\exception\ProfileNotFoundException.java =====
+
+package com.divya.linkedinclone.exception;
+
+public class ProfileNotFoundException extends RuntimeException {
+    public ProfileNotFoundException(String message) {
+        super(message);
+    }
+}
+
+===== .\exception\UserNotFoundException.java =====
+
+package com.divya.linkedinclone.exception;
+
+public class UserNotFoundException extends RuntimeException {
+    public UserNotFoundException(String message) {
+        super(message);
+    }
+}
+
+===== .\filter\JwtRequestFilter.java =====
+
+package com.divya.linkedinclone.filter;
+
+import com.divya.linkedinclone.service.CustomUserDetailsService;
+import com.divya.linkedinclone.util.JwtUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@Component
+public class JwtRequestFilter extends OncePerRequestFilter {
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private CustomUserDetailsService customUserDetailsService;
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
+        final String authorizationHeader = request.getHeader("Authorization");
+
+        String username = null;
+        String jwt = null;
+
+        if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
+            jwt = authorizationHeader.substring(7);
+            username = jwtUtil.extractUsername(jwt);
+        }
+
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            UserDetails userDetails = this.customUserDetailsService.loadUserByUsername(username);
+            if (jwtUtil.validateToken(jwt, userDetails)) {
+                UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
+                        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                usernamePasswordAuthenticationToken
+                        .setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
+            }
+        }
+        chain.doFilter(request, response);
+    }
+}
+
+
+===== .\repository\CommentRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Comment;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface CommentRepository extends JpaRepository<Comment, Long> {
+    List<Comment> findByPostId(Long postId);
+}
+
+===== .\repository\LikeRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Like;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface LikeRepository extends JpaRepository<Like, Long> {
+    Optional<Like> findByPostIdAndUserId(Long postId, Long userId);
+    Long countByPostId(Long postId);
+}
+
+===== .\repository\PostRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Post;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface PostRepository extends JpaRepository<Post, Long> {
+    List<Post> findByUserId(Long userId);
+}
+
+===== .\repository\ProfileRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Profile;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface ProfileRepository extends JpaRepository<Profile, Long> {
+    Optional<Profile> findByUserId(Long userId);
+}
+
+===== .\repository\UserRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface UserRepository extends JpaRepository<User, Long> {
+    Optional<User> findByEmail(String email);
+}
+
+
+===== .\service\CommentService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Comment;
+import com.divya.linkedinclone.entity.Post;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.CommentRepository;
+import com.divya.linkedinclone.repository.PostRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.divya.linkedinclone.exception.CommentNotFoundException;
+import java.util.List;
+
+@Service
+public class CommentService {
+
+    @Autowired
+    private CommentRepository commentRepository;
+
+    @Autowired
+    private PostRepository postRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    public Comment addComment(Long postId, Long userId, String content) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new PostNotFoundException("Post not found with id: " + postId));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        Comment comment = new Comment();
+        comment.setContent(content);
+        comment.setPost(post);
+        comment.setUser(user);
+
+        return commentRepository.save(comment);
+    }
+
+    public List<Comment> getCommentsByPostId(Long postId) {
+        return commentRepository.findByPostId(postId);
+    }
+
+    public void deleteComment(Long commentId) {
+        if (!commentRepository.existsById(commentId)) {
+            throw new CommentNotFoundException("Comment not found with id: " + commentId);
+        }
+        commentRepository.deleteById(commentId);
+    }
+}
+
+===== .\service\CustomUserDetailsService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+
+import java.util.Collections;
+
+@Service
+public class CustomUserDetailsService implements UserDetailsService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Override
+    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
+        return new org.springframework.security.core.userdetails.User(
+                user.getEmail(), user.getPassword(), Collections.emptyList());
+    }
+}
+
+
+===== .\service\LikeService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Like;
+import com.divya.linkedinclone.entity.Post;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.LikeRepository;
+import com.divya.linkedinclone.repository.PostRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.divya.linkedinclone.dto.LikeResponse;
+import java.util.Optional;
+
+@Service
+public class LikeService {
+
+    @Autowired
+    private LikeRepository likeRepository;
+
+    @Autowired
+    private PostRepository postRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    public LikeResponse toggleLike(Long postId, Long userId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new PostNotFoundException("Post not found with id: " + postId));
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        Optional<Like> existingLike = likeRepository.findByPostIdAndUserId(postId, userId);
+
+        if (existingLike.isPresent()) {
+            likeRepository.delete(existingLike.get());
+        } else {
+            Like like = new Like();
+            like.setPost(post);
+            like.setUser(user);
+            likeRepository.save(like);
+        }
+
+        Long likeCount = likeRepository.countByPostId(postId);
+        return new LikeResponse(postId, userId, likeCount);
+    }
+
+    public Long getLikeCount(Long postId) {
+        if (!postRepository.existsById(postId)) {
+            throw new PostNotFoundException("Post not found with id: " + postId);
+        }
+        return likeRepository.countByPostId(postId);
+    }
+}
+
+===== .\service\PostService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Post;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.repository.PostRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.multipart.MultipartFile;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.UUID;
+
+@Service
+public class PostService {
+
+    @Autowired
+    private PostRepository postRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+
+    @Value("${upload.directory}") // Define the upload directory in application.properties
+    private String uploadDirectory;
+
+    public Post createPostWithImage(Long userId, String content, MultipartFile image) throws IOException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        // Save the image file
+        String imagePath = saveImage(image);
+
+        // Create and save the post
+        Post post = new Post();
+        post.setContent(content);
+        post.setImagePath(imagePath);
+        post.setCreatedAt(LocalDateTime.now());
+        post.setUser(user);
+
+        return postRepository.save(post);
+    }
+
+    private String saveImage(MultipartFile image) throws IOException {
+        if (image.isEmpty()) {
+            throw new RuntimeException("Image file is empty");
+        }
+
+        // Generate a unique file name
+        String fileName = UUID.randomUUID().toString() + "_" + image.getOriginalFilename();
+
+        // Create the upload directory if it doesn't exist
+        Path uploadPath = Paths.get(uploadDirectory);
+        if (!Files.exists(uploadPath)) {
+            Files.createDirectories(uploadPath);
+        }
+
+        // Save the file to the upload directory
+        Path filePath = uploadPath.resolve(fileName);
+        Files.copy(image.getInputStream(), filePath);
+
+        return filePath.toString();
+    }
+
+
+    // Create a new post
+    public Post createPost(Long userId, String content) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Post post = new Post();
+        post.setContent(content);
+        post.setCreatedAt(LocalDateTime.now());
+        post.setUser(user);
+
+        return postRepository.save(post);
+    }
+
+
+    // Get all posts by a user
+    public List<Post> getPostsByUserId(Long userId) {
+        if (!userRepository.existsById(userId)) {
+            throw new RuntimeException("User not found");
+        }
+        return postRepository.findByUserId(userId);
+    }
+
+    // Get a specific post by ID
+    public Post getPostById(Long postId) {
+        return postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found"));
+    }
+    public List<Post> getAllPosts() {
+        return postRepository.findAll();
+    }
+    // Update a post
+    public Post updatePost(Long postId, String newContent) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("Post not found with id: " + postId));
+
+        post.setContent(newContent); // Update the content
+        return postRepository.save(post); // Save the updated post
+    }
+    // Delete a post by ID
+    public void deletePost(Long postId) {
+        if (!postRepository.existsById(postId)) {
+            throw new RuntimeException("Post not found");
+        }
+        postRepository.deleteById(postId);
+    }
+}
+
+===== .\service\ProfileService.java =====
+
+package com.divya.linkedinclone.service;
+
+
+import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.exception.ProfileNotFoundException;
+
+import com.divya.linkedinclone.repository.ProfileRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+@Service
+public class ProfileService {
+
+    @Autowired
+    private ProfileRepository profileRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    // Create or update a profile for a user
+    public Profile createOrUpdateProfile(Long userId, @Valid Profile profile) {
+        // Check if a profile already exists for the user
+        Profile existingProfile = profileRepository.findByUserId(userId).orElse(null);
+
+        if (existingProfile != null) {
+            // Update the existing profile
+            existingProfile.setBio(profile.getBio());
+            existingProfile.setProfilePicture(profile.getProfilePicture());
+            existingProfile.setSkills(profile.getSkills());
+            existingProfile.setExperience(profile.getExperience());
+            existingProfile.setEducation(profile.getEducation());
+            existingProfile.setLocation(profile.getLocation());
+            existingProfile.setWebsite(profile.getWebsite());
+            return profileRepository.save(existingProfile);
+        } else {
+            // Create a new profile
+            User user = userRepository.findById(userId)
+                    .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+            profile.setUser(user);
+            return profileRepository.save(profile);
+        }
+    }
+
+    // Get profile by user ID
+    public Profile getProfileByUserId(Long userId) {
+        return profileRepository.findByUserId(userId)
+                .orElseThrow(() -> new RuntimeException("Profile not found for user id: " + userId));
+    }
+
+    // Delete profile by ID
+    public void deleteProfile(Long id) {
+        if (!profileRepository.existsById(id)) {
+            throw new ProfileNotFoundException("Profile not found with id: " + id);
+        }
+        profileRepository.deleteById(id);
+    }
+}
+
+===== .\service\UserService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.dto.UserRegistrationRequest;
+import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.Collections;
+import java.util.Optional;
+
+@Service
+public class UserService implements UserDetailsService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private ProfileService profileService; // Inject ProfileService
+
+    // Register a new user
+    public User registerUser(UserRegistrationRequest registrationRequest) {
+        // Check if the email already exists
+        if (userRepository.findByEmail(registrationRequest.getEmail()).isPresent()) {
+            throw new RuntimeException("Email already exists");
+        }
+
+        // Create and save the User
+        User user = new User();
+        user.setName(registrationRequest.getName());
+        user.setEmail(registrationRequest.getEmail());
+        user.setPassword(passwordEncoder.encode(registrationRequest.getPassword()));
+
+        User savedUser = userRepository.save(user);
+
+        // Create and save the Profile with default values
+        Profile profile = new Profile();
+        profile.setBio(""); // Default empty bio
+        profile.setProfilePicture(""); // Default empty profile picture
+        profile.setSkills(""); // Default empty skills
+        profile.setExperience(""); // Default empty experience
+        profile.setEducation(""); // Default empty education
+        profile.setLocation(""); // Default empty location
+        profile.setWebsite(""); // Default empty website
+        profile.setUser(savedUser); // Associate the profile with the user
+        profileService.createOrUpdateProfile(savedUser.getId(), profile); // Save the profile
+
+        return savedUser;
+    }
+
+    // Find a user by email
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
+    }
+
+    // Load user details by email (required for authentication)
+    @Override
+    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
+
+        // Ensure the password is BCrypt-encoded
+        if (!user.getPassword().startsWith("$2a$")) {
+            throw new UsernameNotFoundException("User password is not encoded with BCrypt");
+        }
+
+        // Return UserDetails object with the encoded password and authorities
+        return new org.springframework.security.core.userdetails.User(
+                user.getEmail(),
+                user.getPassword(),
+                Collections.emptyList() // Add roles/authorities if applicable
+        );
+    }
+}
+
+===== .\util\JwtUtil.java =====
+
+package com.divya.linkedinclone.util;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
+
+import java.util.Base64;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+
+@Component
+public class JwtUtil {
+    private static final String SECRET_KEY = Base64.getEncoder().encodeToString("super_secure_key_12345".getBytes());
+    private static final long EXPIRATION_TIME = 864_000_000; // 10 days
+
+    public String extractUsername(String token) {
+        return extractClaim(token, Claims::getSubject);
+    }
+
+    public Date extractExpiration(String token) {
+        return extractClaim(token, Claims::getExpiration);
+    }
+
+    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
+        final Claims claims = extractAllClaims(token);
+        return claimsResolver.apply(claims);
+    }
+
+    private Claims extractAllClaims(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(SECRET_KEY.getBytes())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
+    private Boolean isTokenExpired(String token) {
+        return extractExpiration(token).before(new Date());
+    }
+
+    public String generateToken(UserDetails userDetails) {
+        Map<String, Object> claims = new HashMap<>();
+        return createToken(claims, userDetails.getUsername());
+    }
+
+    private String createToken(Map<String, Object> claims, String subject) {
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(Keys.hmacShaKeyFor(SECRET_KEY.getBytes()), SignatureAlgorithm.HS256)
+                .compact();
+    }
+
+    public Boolean validateToken(String token, UserDetails userDetails) {
+        final String username = extractUsername(token);
+        return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+    }
+}
