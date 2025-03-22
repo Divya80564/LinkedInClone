@@ -11,6 +11,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import com.divya.linkedinclone.exception.UserNotFoundException;
 
 import java.util.Collections;
 import java.util.Optional;
@@ -31,7 +32,7 @@ public class UserService implements UserDetailsService {
     public User registerUser(UserRegistrationRequest registrationRequest) {
         // Check if the email already exists
         if (userRepository.findByEmail(registrationRequest.getEmail()).isPresent()) {
-            throw new RuntimeException("Email already exists");
+            throw new UserNotFoundException("Email already exists");
         }
 
         // Create and save the User

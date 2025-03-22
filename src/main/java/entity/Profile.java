@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+
 @Entity
 @Getter
 @Setter
@@ -15,16 +16,16 @@ public class Profile {
     private Long id;
 
     private String bio;
-    private String profilePicture; // Add this field
+    private String profilePicture;
     private String skills;
     private String experience;
     private String education;
-    private String location; // Add this field
-    private String website; // Add this field
+    private String location;
+    private String website;
 
     // One-to-one relationship with User
     @OneToOne
     @JoinColumn(name = "user_id", referencedColumnName = "id")
-    @JsonIgnore // Add this annotation
+    @JsonIgnore
     private User user;
 }

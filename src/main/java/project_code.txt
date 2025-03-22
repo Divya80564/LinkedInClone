@@ -140,6 +140,7 @@ public class SecurityConfig {
         authProvider.setPasswordEncoder(passwordEncoder());
         return authProvider;
     }
+
 }
 
 
@@ -219,6 +220,130 @@ public class CommentController {
     }
 }
 
+===== .\controller\ConnectionController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.service.ConnectionService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import com.divya.linkedinclone.entity.Connection;
+import java.util.List;
+import java.util.Map;
+import com.divya.linkedinclone.dto.ConnectionResponse;
+
+@RestController
+@RequestMapping("/api/connections")
+public class ConnectionController {
+
+    @Autowired
+    private ConnectionService connectionService;
+
+    @PostMapping("/request")
+    public ResponseEntity<?> sendConnectionRequest(@RequestBody Map<String, Long> request) {
+        Long senderId = request.get("senderId");
+        Long receiverId = request.get("receiverId");
+        String message = connectionService.sendConnectionRequest(senderId, receiverId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @PostMapping("/accept")
+    public ResponseEntity<?> acceptConnectionRequest(@RequestBody Map<String, Long> request) {
+        Long receiverId = request.get("receiverId");
+        Long senderId = request.get("senderId");
+        String message = connectionService.acceptConnectionRequest(receiverId, senderId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @PostMapping("/reject")
+    public ResponseEntity<?> rejectConnectionRequest(@RequestBody Map<String, Long> request) {
+        Long receiverId = request.get("receiverId");
+        Long senderId = request.get("senderId");
+        String message = connectionService.rejectConnectionRequest(receiverId, senderId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @DeleteMapping("/cancel")
+    public ResponseEntity<?> cancelConnectionRequest(@RequestBody Map<String, Long> request) {
+        Long senderId = request.get("senderId");
+        Long receiverId = request.get("receiverId");
+        String message = connectionService.cancelConnectionRequest(senderId, receiverId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @DeleteMapping("/remove")
+    public ResponseEntity<?> removeConnection(@RequestBody Map<String, Long> request) {
+        Long userId = request.get("userId");
+        Long connectionId = request.get("connectionId");
+        String message = connectionService.removeConnection(userId, connectionId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @GetMapping("/pending")
+    public ResponseEntity<?> getPendingRequests(@RequestParam Long userId) {
+        List<ConnectionResponse> pendingRequests = connectionService.getPendingRequests(userId);
+        return ResponseEntity.ok(Map.of("pendingRequests", pendingRequests));
+    }
+
+    @GetMapping("/all")
+    public ResponseEntity<?> getAllConnections(@RequestParam Long userId) {
+        List<ConnectionResponse> connections = connectionService.getAllConnections(userId);
+        return ResponseEntity.ok(Map.of("connections", connections));
+    }
+
+    @GetMapping("/mutual")
+    public ResponseEntity<?> getMutualConnections(@RequestParam Long userId, @RequestParam Long otherUserId) {
+        List<ConnectionResponse> mutualConnections = connectionService.getMutualConnections(userId, otherUserId);
+        return ResponseEntity.ok(Map.of("mutualConnections", mutualConnections));
+    }
+}
+
+===== .\controller\FollowController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.service.FollowService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/connections")
+public class FollowController {
+
+    @Autowired
+    private FollowService followService;
+
+    @PostMapping("/follow/{userId}")
+    public ResponseEntity<?> followUser(@PathVariable Long userId, @RequestParam Long followerId) {
+        String message = followService.followUser(followerId, userId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @DeleteMapping("/unfollow/{userId}")
+    public ResponseEntity<?> unfollowUser(@PathVariable Long userId, @RequestParam Long followerId) {
+        String message = followService.unfollowUser(followerId, userId);
+        return ResponseEntity.ok(Map.of("message", message));
+    }
+
+    @GetMapping("/followers/{userId}")
+    public ResponseEntity<?> getFollowers(@PathVariable Long userId) {
+        List<Long> followers = followService.getFollowers(userId);
+        return ResponseEntity.ok(Map.of("followers", followers));
+    }
+
+    @GetMapping("/following/{userId}")
+    public ResponseEntity<?> getFollowing(@PathVariable Long userId) {
+        List<Long> following = followService.getFollowing(userId);
+        return ResponseEntity.ok(Map.of("following", following));
+    }
+}
+
 ===== .\controller\LikeController.java =====
 
 package com.divya.linkedinclone.controller;
@@ -256,6 +381,48 @@ public class LikeController {
         } catch (PostNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }
+    }
+}
+
+===== .\controller\NotificationController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.entity.Notification;
+import com.divya.linkedinclone.service.NotificationService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.Map;
+import java.util.List;
+import com.divya.linkedinclone.dto.NotificationResponse;
+
+@RestController
+@RequestMapping("/api/notifications")
+public class NotificationController {
+
+    @Autowired
+    private NotificationService notificationService;
+
+    // Get all unread notifications for a user
+    @GetMapping("/unread")
+    public ResponseEntity<?> getUnreadNotifications(@RequestParam Long userId) {
+        List<NotificationResponse> unreadNotifications = notificationService.getUnreadNotifications(userId);
+        return ResponseEntity.ok(Map.of("unreadNotifications", unreadNotifications));
+    }
+
+    // Get all notifications for a user
+    @GetMapping("/all")
+    public ResponseEntity<?> getAllNotifications(@RequestParam Long userId) {
+        List<NotificationResponse> allNotifications = notificationService.getAllNotifications(userId);
+        return ResponseEntity.ok(Map.of("allNotifications", allNotifications));
+    }
+
+    // Mark a notification as read
+    @PostMapping("/mark-as-read/{notificationId}")
+    public ResponseEntity<?> markNotificationAsRead(@PathVariable Long notificationId) {
+        notificationService.markNotificationAsRead(notificationId);
+        return ResponseEntity.ok(Map.of("message", "Notification marked as read."));
     }
 }
 
@@ -605,6 +772,27 @@ public class CommentResponse {
     }
 }
 
+===== .\dto\ConnectionResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import lombok.Getter;
+import lombok.Setter;
+
+@Getter
+@Setter
+public class ConnectionResponse {
+    private Long senderId;
+    private String senderName;
+    private String status;
+
+    public ConnectionResponse(Long senderId, String senderName, String status) {
+        this.senderId = senderId;
+        this.senderName = senderName;
+        this.status = status;
+    }
+}
+
 ===== .\dto\CreatePostRequest.java =====
 
 package com.divya.linkedinclone.dto;
@@ -683,6 +871,35 @@ public class LoginRequest {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+}
+
+===== .\dto\NotificationResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+public class NotificationResponse {
+    private Long id;
+    private Long senderId;
+    private String senderName;
+    private String message;
+    private String status;
+    private LocalDateTime createdAt;
+
+    public NotificationResponse(Long id, Long senderId, String senderName, String message, String status, LocalDateTime createdAt) {
+        this.id = id;
+        this.senderId = senderId;
+        this.senderName = senderName;
+        this.message = message;
+        this.status = status;
+        this.createdAt = createdAt;
     }
 }
 
@@ -817,6 +1034,83 @@ public class Comment {
     private User user;
 }
 
+===== .\entity\Connection.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "connections")
+@EntityListeners(AuditingEntityListener.class)
+public class Connection {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "sender_id", nullable = false)
+    private User sender;
+
+    @ManyToOne
+    @JoinColumn(name = "receiver_id", nullable = false)
+    private User receiver;
+
+    @Enumerated(EnumType.STRING)
+    private ConnectionStatus status = ConnectionStatus.PENDING;
+
+    @CreatedDate
+    private LocalDateTime createdAt;
+
+    public enum ConnectionStatus {
+        PENDING, CONNECTED, REJECTED
+    }
+}
+
+===== .\entity\Follow.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "follows")
+@EntityListeners(AuditingEntityListener.class)
+public class Follow {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "follower_id", nullable = false)
+    private User follower;
+
+    @ManyToOne
+    @JoinColumn(name = "following_id", nullable = false)
+    private User following;
+
+    @CreatedDate
+    private LocalDateTime createdAt;
+}
+
 ===== .\entity\Like.java =====
 
 package com.divya.linkedinclone.entity;
@@ -844,6 +1138,50 @@ public class Like {
     private User user;
 }
 
+===== .\entity\Notification.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "notifications")
+@EntityListeners(AuditingEntityListener.class)
+public class Notification {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "recipient_id", nullable = false)
+    private User recipient;
+
+    @ManyToOne
+    @JoinColumn(name = "sender_id", nullable = false)
+    private User sender;
+
+    private String message;
+
+    @Enumerated(EnumType.STRING)
+    private NotificationStatus status = NotificationStatus.UNREAD;
+
+    @CreatedDate
+    private LocalDateTime createdAt;
+
+    public enum NotificationStatus {
+        UNREAD, READ
+    }
+}
+
 ===== .\entity\Post.java =====
 
 package com.divya.linkedinclone.entity;
@@ -862,7 +1200,7 @@ import java.time.LocalDateTime;
 @Getter
 @Setter
 @Table(name = "posts")
-@EntityListeners(AuditingEntityListener.class) // Enable auditing
+@EntityListeners(AuditingEntityListener.class)
 public class Post {
 
     @Id
@@ -872,14 +1210,16 @@ public class Post {
     private String content;
 
     @CreatedDate
-    private LocalDateTime createdAt; // Correct usage of @CreatedDate
+    private LocalDateTime createdAt;
+
     @LastModifiedDate
-    private LocalDateTime updatedAt; // Correct usage of @LastModifiedDate
+    private LocalDateTime updatedAt;
+
     private String imagePath;
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
-    @JsonIgnore // Add this annotatio
+    @JsonIgnore
     private User user;
 }
 
@@ -891,6 +1231,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+
 @Entity
 @Getter
 @Setter
@@ -902,17 +1243,17 @@ public class Profile {
     private Long id;
 
     private String bio;
-    private String profilePicture; // Add this field
+    private String profilePicture;
     private String skills;
     private String experience;
     private String education;
-    private String location; // Add this field
-    private String website; // Add this field
+    private String location;
+    private String website;
 
     // One-to-one relationship with User
     @OneToOne
     @JoinColumn(name = "user_id", referencedColumnName = "id")
-    @JsonIgnore // Add this annotation
+    @JsonIgnore
     private User user;
 }
 
@@ -957,7 +1298,7 @@ public class User implements UserDetails {
 
     // One-to-one relationship with Profile
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JsonIgnore // Add this annotation
+    @JsonIgnore
     private Profile profile;
 
     // One-to-many relationship with Post
@@ -1125,6 +1466,46 @@ public interface CommentRepository extends JpaRepository<Comment, Long> {
     List<Comment> findByPostId(Long postId);
 }
 
+===== .\repository\ConnectionRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Connection;
+import com.divya.linkedinclone.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface ConnectionRepository extends JpaRepository<Connection, Long> {
+    Optional<Connection> findBySenderAndReceiver(User sender, User receiver);
+    List<Connection> findByReceiverAndStatus(User receiver, Connection.ConnectionStatus status);
+    List<Connection> findBySenderOrReceiver(User sender, User receiver);
+    List<Connection> findBySender(User sender);
+    List<Connection> findByReceiver(User receiver);
+}
+
+===== .\repository\FollowRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Follow;
+import com.divya.linkedinclone.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface FollowRepository extends JpaRepository<Follow, Long> {
+    Optional<Follow> findByFollowerAndFollowing(User follower, User following);
+    List<Follow> findByFollower(User follower);
+    List<Follow> findByFollowing(User following);
+}
+
 ===== .\repository\LikeRepository.java =====
 
 package com.divya.linkedinclone.repository;
@@ -1139,6 +1520,23 @@ import java.util.Optional;
 public interface LikeRepository extends JpaRepository<Like, Long> {
     Optional<Like> findByPostIdAndUserId(Long postId, Long userId);
     Long countByPostId(Long postId);
+}
+
+===== .\repository\NotificationRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Notification;
+import com.divya.linkedinclone.entity.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface NotificationRepository extends JpaRepository<Notification, Long> {
+    List<Notification> findByRecipientAndStatus(User recipient, Notification.NotificationStatus status);
+    List<Notification> findByRecipient(User recipient);
 }
 
 ===== .\repository\PostRepository.java =====
@@ -1242,6 +1640,173 @@ public class CommentService {
     }
 }
 
+===== .\service\ConnectionService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Connection;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.ConnectionRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import java.util.stream.Collectors;
+import java.util.List;
+import java.util.Optional;
+import com.divya.linkedinclone.dto.ConnectionResponse;
+
+@Service
+public class ConnectionService {
+
+    @Autowired
+    private ConnectionRepository connectionRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private NotificationService notificationService; // Add this line
+
+
+    public String sendConnectionRequest(Long senderId, Long receiverId) {
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender user not found with id: " + senderId));
+        User receiver = userRepository.findById(receiverId)
+                .orElseThrow(() -> new UserNotFoundException("Receiver user not found with id: " + receiverId));
+
+        Optional<Connection> existingConnection = connectionRepository.findBySenderAndReceiver(sender, receiver);
+        if (existingConnection.isPresent()) {
+            return "Connection request already sent.";
+        }
+
+        Connection connection = new Connection();
+        connection.setSender(sender);
+        connection.setReceiver(receiver);
+        connection.setStatus(Connection.ConnectionStatus.PENDING);
+        connectionRepository.save(connection);
+
+        // Create a notification for the receiver
+        notificationService.createNotification(receiverId, senderId, "You have a new connection request from " + sender.getName());
+
+        return "Connection request sent successfully.";
+    }
+
+    public String acceptConnectionRequest(Long receiverId, Long senderId) {
+        User receiver = userRepository.findById(receiverId)
+                .orElseThrow(() -> new UserNotFoundException("Receiver user not found with id: " + receiverId));
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender user not found with id: " + senderId));
+
+        Connection connection = connectionRepository.findBySenderAndReceiver(sender, receiver)
+                .orElseThrow(() -> new RuntimeException("Connection request not found."));
+
+        connection.setStatus(Connection.ConnectionStatus.CONNECTED);
+        connectionRepository.save(connection);
+
+        // Create a notification for the sender
+        notificationService.createNotification(senderId, receiverId, receiver.getName() + " accepted your connection request.");
+
+        return "Connection request accepted. You are now connected!";
+    }
+
+    public String rejectConnectionRequest(Long receiverId, Long senderId) {
+        User receiver = userRepository.findById(receiverId)
+                .orElseThrow(() -> new UserNotFoundException("Receiver user not found with id: " + receiverId));
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender user not found with id: " + senderId));
+
+        Connection connection = connectionRepository.findBySenderAndReceiver(sender, receiver)
+                .orElseThrow(() -> new RuntimeException("Connection request not found."));
+
+        connection.setStatus(Connection.ConnectionStatus.REJECTED);
+        connectionRepository.save(connection);
+
+        // Create a notification for the sender
+        notificationService.createNotification(senderId, receiverId, receiver.getName() + " rejected your connection request.");
+
+        return "Connection request rejected.";
+    }
+
+    public String cancelConnectionRequest(Long senderId, Long receiverId) {
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender user not found with id: " + senderId));
+        User receiver = userRepository.findById(receiverId)
+                .orElseThrow(() -> new UserNotFoundException("Receiver user not found with id: " + receiverId));
+
+        Connection connection = connectionRepository.findBySenderAndReceiver(sender, receiver)
+                .orElseThrow(() -> new RuntimeException("Connection request not found."));
+
+        connectionRepository.delete(connection);
+
+        return "Connection request canceled.";
+    }
+
+    public String removeConnection(Long userId, Long connectionId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        User connectionUser = userRepository.findById(connectionId)
+                .orElseThrow(() -> new UserNotFoundException("Connection user not found with id: " + connectionId));
+
+        // Find the connection between the two users
+        Optional<Connection> connection = connectionRepository.findBySenderAndReceiver(user, connectionUser);
+        if (connection.isEmpty()) {
+            connection = connectionRepository.findBySenderAndReceiver(connectionUser, user);
+        }
+
+        if (connection.isEmpty()) {
+            throw new RuntimeException("Connection not found.");
+        }
+
+        connectionRepository.delete(connection.get());
+        return "Connection removed successfully.";
+    }
+
+    public List<ConnectionResponse> getPendingRequests(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        List<Connection> pendingConnections = connectionRepository.findByReceiverAndStatus(user, Connection.ConnectionStatus.PENDING);
+        return pendingConnections.stream()
+                .map(connection -> new ConnectionResponse(
+                        connection.getSender().getId(),
+                        connection.getSender().getName(),
+                        connection.getStatus().toString()
+                ))
+                .collect(Collectors.toList());
+    }
+
+    public List<ConnectionResponse> getMutualConnections(Long userId, Long otherUserId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        User otherUser = userRepository.findById(otherUserId)
+                .orElseThrow(() -> new UserNotFoundException("Other user not found with id: " + otherUserId));
+
+        List<Connection> userConnections = connectionRepository.findBySenderOrReceiver(user, user);
+        List<Connection> otherUserConnections = connectionRepository.findBySenderOrReceiver(otherUser, otherUser);
+
+        // Find mutual connections
+        return userConnections.stream()
+                .filter(connection -> otherUserConnections.contains(connection))
+                .map(connection -> {
+                    User connectedUser = connection.getSender().equals(user) ? connection.getReceiver() : connection.getSender();
+                    return new ConnectionResponse(connectedUser.getId(), connectedUser.getName(), connection.getStatus().toString());
+                })
+                .collect(Collectors.toList());
+    }
+
+    public List<ConnectionResponse> getAllConnections(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        List<Connection> connections = connectionRepository.findBySenderOrReceiver(user, user);
+        return connections.stream()
+                .map(connection -> {
+                    User connectedUser = connection.getSender().equals(user) ? connection.getReceiver() : connection.getSender();
+                    return new ConnectionResponse(connectedUser.getId(), connectedUser.getName(), connection.getStatus().toString());
+                })
+                .collect(Collectors.toList());
+    }
+}
+
 ===== .\service\CustomUserDetailsService.java =====
 
 package com.divya.linkedinclone.service;
@@ -1271,6 +1836,82 @@ public class CustomUserDetailsService implements UserDetailsService {
     }
 }
 
+
+===== .\service\FollowService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Follow;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.FollowRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+@Service
+public class FollowService {
+
+    @Autowired
+    private FollowRepository followRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    public String followUser(Long followerId, Long followingId) {
+        User follower = userRepository.findById(followerId)
+                .orElseThrow(() -> new UserNotFoundException("Follower user not found with id: " + followerId));
+        User following = userRepository.findById(followingId)
+                .orElseThrow(() -> new UserNotFoundException("Following user not found with id: " + followingId));
+
+        Optional<Follow> existingFollow = followRepository.findByFollowerAndFollowing(follower, following);
+        if (existingFollow.isPresent()) {
+            return "You are already following this user";
+        }
+
+        Follow follow = new Follow();
+        follow.setFollower(follower);
+        follow.setFollowing(following);
+        followRepository.save(follow);
+
+        return "You are now following user " + followingId;
+    }
+
+    public String unfollowUser(Long followerId, Long followingId) {
+        User follower = userRepository.findById(followerId)
+                .orElseThrow(() -> new UserNotFoundException("Follower user not found with id: " + followerId));
+        User following = userRepository.findById(followingId)
+                .orElseThrow(() -> new UserNotFoundException("Following user not found with id: " + followingId));
+
+        Optional<Follow> existingFollow = followRepository.findByFollowerAndFollowing(follower, following);
+        if (existingFollow.isEmpty()) {
+            return "You are not following this user";
+        }
+
+        followRepository.delete(existingFollow.get());
+        return "You have unfollowed user " + followingId;
+    }
+
+    public List<Long> getFollowers(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        return followRepository.findByFollowing(user).stream()
+                .map(follow -> follow.getFollower().getId())
+                .collect(Collectors.toList());
+    }
+
+    public List<Long> getFollowing(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        return followRepository.findByFollower(user).stream()
+                .map(follow -> follow.getFollowing().getId())
+                .collect(Collectors.toList());
+    }
+}
 
 ===== .\service\LikeService.java =====
 
@@ -1330,6 +1971,88 @@ public class LikeService {
     }
 }
 
+===== .\service\NotificationService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Notification;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.NotificationRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.divya.linkedinclone.dto.NotificationResponse;
+import java.util.stream.Collectors;
+
+import java.util.List;
+
+@Service
+public class NotificationService {
+
+    @Autowired
+    private NotificationRepository notificationRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    // Create a new notification
+    public Notification createNotification(Long recipientId, Long senderId, String message) {
+        User recipient = userRepository.findById(recipientId)
+                .orElseThrow(() -> new UserNotFoundException("Recipient user not found with id: " + recipientId));
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender user not found with id: " + senderId));
+
+        Notification notification = new Notification();
+        notification.setRecipient(recipient);
+        notification.setSender(sender);
+        notification.setMessage(message);
+        return notificationRepository.save(notification);
+    }
+
+    // Get all unread notifications for a user
+    public List<NotificationResponse> getUnreadNotifications(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        List<Notification> unreadNotifications = notificationRepository.findByRecipientAndStatus(user, Notification.NotificationStatus.UNREAD);
+        return unreadNotifications.stream()
+                .map(notification -> new NotificationResponse(
+                        notification.getId(),
+                        notification.getSender().getId(),
+                        notification.getSender().getName(),
+                        notification.getMessage(),
+                        notification.getStatus().toString(),
+                        notification.getCreatedAt()
+                ))
+                .collect(Collectors.toList());
+    }
+
+    // Get all notifications for a user
+    public List<NotificationResponse> getAllNotifications(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        List<Notification> allNotifications = notificationRepository.findByRecipient(user);
+        return allNotifications.stream()
+                .map(notification -> new NotificationResponse(
+                        notification.getId(),
+                        notification.getSender().getId(),
+                        notification.getSender().getName(),
+                        notification.getMessage(),
+                        notification.getStatus().toString(),
+                        notification.getCreatedAt()
+                ))
+                .collect(Collectors.toList());
+    }
+
+    // Mark a notification as read
+    public void markNotificationAsRead(Long notificationId) {
+        Notification notification = notificationRepository.findById(notificationId)
+                .orElseThrow(() -> new RuntimeException("Notification not found with id: " + notificationId));
+        notification.setStatus(Notification.NotificationStatus.READ);
+        notificationRepository.save(notification);
+    }
+}
+
 ===== .\service\PostService.java =====
 
 package com.divya.linkedinclone.service;
@@ -1349,6 +2072,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.UUID;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+
 
 @Service
 public class PostService {
@@ -1427,7 +2152,7 @@ public class PostService {
     // Get a specific post by ID
     public Post getPostById(Long postId) {
         return postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("Post not found"));
+                .orElseThrow(() -> new PostNotFoundException("Post not found with id: " + postId));
     }
     public List<Post> getAllPosts() {
         return postRepository.findAll();
@@ -1528,6 +2253,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import com.divya.linkedinclone.exception.UserNotFoundException;
 
 import java.util.Collections;
 import java.util.Optional;
@@ -1548,7 +2274,7 @@ public class UserService implements UserDetailsService {
     public User registerUser(UserRegistrationRequest registrationRequest) {
         // Check if the email already exists
         if (userRepository.findByEmail(registrationRequest.getEmail()).isPresent()) {
-            throw new RuntimeException("Email already exists");
+            throw new UserNotFoundException("Email already exists");
         }
 
         // Create and save the User

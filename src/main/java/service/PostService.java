@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.UUID;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+
 
 @Service
 public class PostService {
@@ -93,7 +95,7 @@ public class PostService {
     // Get a specific post by ID
     public Post getPostById(Long postId) {
         return postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("Post not found"));
+                .orElseThrow(() -> new PostNotFoundException("Post not found with id: " + postId));
     }
     public List<Post> getAllPosts() {
         return postRepository.findAll();

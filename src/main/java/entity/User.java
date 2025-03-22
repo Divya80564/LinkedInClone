@@ -37,7 +37,7 @@ public class User implements UserDetails {
 
     // One-to-one relationship with Profile
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JsonIgnore // Add this annotation
+    @JsonIgnore
     private Profile profile;
 
     // One-to-many relationship with Post
