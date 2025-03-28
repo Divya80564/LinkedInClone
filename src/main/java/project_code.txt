@@ -84,6 +84,7 @@ import com.divya.linkedinclone.filter.JwtRequestFilter;
 import com.divya.linkedinclone.service.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -93,8 +94,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 
 @Configuration
+@EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtRequestFilter jwtRequestFilter;
@@ -107,19 +111,37 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-                .csrf(csrf -> csrf.disable()) // Disable CSRF protection
+        http.csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/uploads/**").permitAll() // ✅ Allow public access to uploads
-                        .requestMatchers("/api/users/register", "/api/users/login").permitAll() // Public endpoints
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN") // Only admins can access /api/admin/**
-                        .requestMatchers("/api/user/**").hasAnyRole("USER", "ADMIN") // Both users and admins can access /api/user/**
-                        .anyRequest().authenticated() // All other endpoints require authentication
+                        .requestMatchers(
+                                "/",
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/swagger-resources/**",
+                                "/swagger-resources",
+                                "/swagger-ui.html",
+                                "/webjars/**",
+                                "/favicon.ico",
+                                "/error",
+                                "/swagger-ui/index.html",
+                                "/v3/api-docs",
+                                "/v3/api-docs/swagger-config"
+                        ).permitAll()
+                        .requestMatchers("/uploads/**").permitAll()
+                        .requestMatchers("/api/users/register", "/api/users/login").permitAll()
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/user/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers("/messages/**").authenticated()
+                        .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS) // Use stateless sessions
+                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
-                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); // Add JWT filter
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
+                )
+                .addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 
@@ -140,9 +162,48 @@ public class SecurityConfig {
         authProvider.setPasswordEncoder(passwordEncoder());
         return authProvider;
     }
-
 }
 
+===== .\config\SwaggerConfig.java =====
+
+package com.divya.linkedinclone.config;
+
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Contact;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.servers.Server;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+import java.util.List;
+
+@Configuration
+public class SwaggerConfig {
+
+    @Bean
+    public OpenAPI myOpenAPI() {
+        Server devServer = new Server();
+        devServer.setUrl("http://localhost:8080");
+        devServer.setDescription("Server URL in Development environment");
+
+        Contact contact = new Contact();
+        contact.setEmail("your-email@example.com");
+        contact.setName("Your Name");
+        contact.setUrl("https://www.your-website.com");
+
+        License mitLicense = new License().name("MIT License").url("https://choosealicense.com/licenses/mit/");
+
+        Info info = new Info()
+                .title("LinkedIn Clone API")
+                .version("1.0")
+                .contact(contact)
+                .description("This API exposes endpoints for LinkedIn Clone application.")
+                .license(mitLicense);
+
+        return new OpenAPI().info(info).servers(List.of(devServer));
+    }
+}
 
 ===== .\config\WebConfig.java =====
 
@@ -180,18 +241,64 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.List;
 import java.util.stream.Collectors;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequestMapping("/api/comments")
+@Tag(name = "Comment Management", description = "Operations related to post comments including creation, retrieval, and deletion")
 public class CommentController {
 
     @Autowired
     private CommentService commentService;
 
-    @PostMapping("/{postId}")
+    @Operation(
+            summary = "Add a comment to a post",
+            description = "Creates a new comment on the specified post by the given user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "201",
+                    description = "Comment created successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = CommentResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post or User not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Post not found with id: 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid input",
+                    content = @Content
+            )
+    })
+            @PostMapping("/{postId}")
     public ResponseEntity<CommentResponse> addComment(
+            @Parameter(description = "ID of the post to comment on", example = "1", required = true)
             @PathVariable Long postId,
+
+            @Parameter(description = "ID of the user creating the comment", example = "1", required = true)
             @RequestParam Long userId,
+
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Comment content in JSON format",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"content\": \"This is a great post!\"}")
+                    )
+            )
             @RequestBody Map<String, String> request
     ) {
         String content = request.get("content");
@@ -200,8 +307,30 @@ public class CommentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
+    @Operation(
+            summary = "Get comments for a post",
+            description = "Retrieves all comments associated with the specified post ID"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Comments retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(type = "array", implementation = CommentResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/{postId}")
-    public ResponseEntity<List<CommentResponse>> getCommentsByPostId(@PathVariable Long postId) {
+    public ResponseEntity<List<CommentResponse>> getCommentsByPostId(
+            @Parameter(description = "ID of the post to retrieve comments for", example = "1", required = true)
+            @PathVariable Long postId
+    ) {
         List<Comment> comments = commentService.getCommentsByPostId(postId);
         List<CommentResponse> responses = comments.stream()
                 .map(CommentResponse::new)
@@ -209,8 +338,33 @@ public class CommentController {
         return ResponseEntity.ok(responses);
     }
 
+    @Operation(
+            summary = "Delete a comment",
+            description = "Deletes a comment by its ID if it exists"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Comment deleted successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Comment deleted successfully\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Comment not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Comment not found with id: 123\"}")
+                    )
+            )
+    })
     @DeleteMapping("/{commentId}")
-    public ResponseEntity<?> deleteComment(@PathVariable Long commentId) {
+    public ResponseEntity<?> deleteComment(
+            @Parameter(description = "ID of the comment to be deleted", example = "1", required = true)
+            @PathVariable Long commentId
+    ) {
         try {
             commentService.deleteComment(commentId);
             return ResponseEntity.ok("Comment deleted successfully");
@@ -233,68 +387,285 @@ import com.divya.linkedinclone.entity.Connection;
 import java.util.List;
 import java.util.Map;
 import com.divya.linkedinclone.dto.ConnectionResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequestMapping("/api/connections")
+@Tag(name = "Connection Management", description = "Operations for managing user connections including requests, acceptances, and mutual connections")
 public class ConnectionController {
 
     @Autowired
     private ConnectionService connectionService;
 
+    @Operation(
+            summary = "Send connection request",
+            description = "Sends a connection request from one user to another"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connection request sent successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Connection request sent successfully.\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Sender or receiver not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid request or duplicate connection request",
+                    content = @Content
+            )
+    })
     @PostMapping("/request")
-    public ResponseEntity<?> sendConnectionRequest(@RequestBody Map<String, Long> request) {
+    public ResponseEntity<?> sendConnectionRequest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Connection request details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"senderId\": 1, \"receiverId\": 2}")
+                    )
+            )
+            @RequestBody Map<String, Long> request) {
         Long senderId = request.get("senderId");
         Long receiverId = request.get("receiverId");
         String message = connectionService.sendConnectionRequest(senderId, receiverId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Accept connection request",
+            description = "Accepts a pending connection request"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connection request accepted",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Connection request accepted. You are now connected!\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Request not found or users not found",
+                    content = @Content
+            )
+    })
     @PostMapping("/accept")
-    public ResponseEntity<?> acceptConnectionRequest(@RequestBody Map<String, Long> request) {
+    public ResponseEntity<?> acceptConnectionRequest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Connection acceptance details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"receiverId\": 2, \"senderId\": 1}")
+                    )
+            )
+            @RequestBody Map<String, Long> request) {
         Long receiverId = request.get("receiverId");
         Long senderId = request.get("senderId");
         String message = connectionService.acceptConnectionRequest(receiverId, senderId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Reject connection request",
+            description = "Rejects a pending connection request"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connection request rejected",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Connection request rejected.\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Request not found or users not found",
+                    content = @Content
+            )
+    })
     @PostMapping("/reject")
-    public ResponseEntity<?> rejectConnectionRequest(@RequestBody Map<String, Long> request) {
+    public ResponseEntity<?> rejectConnectionRequest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Connection rejection details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"receiverId\": 2, \"senderId\": 1}")
+                    )
+            )
+            @RequestBody Map<String, Long> request) {
         Long receiverId = request.get("receiverId");
         Long senderId = request.get("senderId");
         String message = connectionService.rejectConnectionRequest(receiverId, senderId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Cancel connection request",
+            description = "Cancels a sent connection request"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connection request canceled",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Connection request canceled.\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Request not found or users not found",
+                    content = @Content
+            )
+    })
     @DeleteMapping("/cancel")
-    public ResponseEntity<?> cancelConnectionRequest(@RequestBody Map<String, Long> request) {
+    public ResponseEntity<?> cancelConnectionRequest(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Connection cancellation details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"senderId\": 1, \"receiverId\": 2}")
+                    )
+            )
+            @RequestBody Map<String, Long> request) {
         Long senderId = request.get("senderId");
         Long receiverId = request.get("receiverId");
         String message = connectionService.cancelConnectionRequest(senderId, receiverId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Remove connection",
+            description = "Removes an existing connection between two users"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connection removed successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Connection removed successfully.\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Connection not found or users not found",
+                    content = @Content
+            )
+    })
     @DeleteMapping("/remove")
-    public ResponseEntity<?> removeConnection(@RequestBody Map<String, Long> request) {
+    public ResponseEntity<?> removeConnection(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Connection removal details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"userId\": 1, \"connectionId\": 2}")
+                    )
+            )
+            @RequestBody Map<String, Long> request) {
         Long userId = request.get("userId");
         Long connectionId = request.get("connectionId");
         String message = connectionService.removeConnection(userId, connectionId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Get pending connection requests",
+            description = "Retrieves all pending connection requests for a user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Pending requests retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"pendingRequests\": [{\"senderId\": 1, \"senderName\": \"John Doe\", \"status\": \"PENDING\"}]}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/pending")
-    public ResponseEntity<?> getPendingRequests(@RequestParam Long userId) {
+    public ResponseEntity<?> getPendingRequests(
+            @Parameter(description = "ID of the user to retrieve pending requests for", example = "1", required = true)
+            @RequestParam Long userId) {
         List<ConnectionResponse> pendingRequests = connectionService.getPendingRequests(userId);
         return ResponseEntity.ok(Map.of("pendingRequests", pendingRequests));
     }
 
+    @Operation(
+            summary = "Get all connections",
+            description = "Retrieves all connections (accepted) for a user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Connections retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"connections\": [{\"senderId\": 1, \"senderName\": \"John Doe\", \"status\": \"CONNECTED\"}]}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/all")
-    public ResponseEntity<?> getAllConnections(@RequestParam Long userId) {
+    public ResponseEntity<?> getAllConnections(
+            @Parameter(description = "ID of the user to retrieve connections for", example = "1", required = true)
+            @RequestParam Long userId) {
         List<ConnectionResponse> connections = connectionService.getAllConnections(userId);
         return ResponseEntity.ok(Map.of("connections", connections));
     }
 
+    @Operation(
+            summary = "Get mutual connections",
+            description = "Retrieves mutual connections between two users"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Mutual connections retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"mutualConnections\": [{\"senderId\": 3, \"senderName\": \"Jane Smith\", \"status\": \"CONNECTED\"}]}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "One or both users not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/mutual")
-    public ResponseEntity<?> getMutualConnections(@RequestParam Long userId, @RequestParam Long otherUserId) {
+    public ResponseEntity<?> getMutualConnections(
+            @Parameter(description = "ID of the first user", example = "1", required = true)
+            @RequestParam Long userId,
+
+            @Parameter(description = "ID of the second user", example = "2", required = true)
+            @RequestParam Long otherUserId) {
         List<ConnectionResponse> mutualConnections = connectionService.getMutualConnections(userId, otherUserId);
         return ResponseEntity.ok(Map.of("mutualConnections", mutualConnections));
     }
@@ -308,37 +679,145 @@ import com.divya.linkedinclone.service.FollowService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Map;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequestMapping("/api/connections")
+@Tag(name = "Follow Management", description = "Operations for managing user following relationships")
 public class FollowController {
 
     @Autowired
     private FollowService followService;
 
+    @Operation(
+            summary = "Follow a user",
+            description = "Creates a follow relationship where the follower follows the specified user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Successfully followed user",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"You are now following user 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid request or already following",
+                    content = @Content
+            )
+    })
     @PostMapping("/follow/{userId}")
-    public ResponseEntity<?> followUser(@PathVariable Long userId, @RequestParam Long followerId) {
+    public ResponseEntity<?> followUser(
+            @Parameter(description = "ID of the user to be followed", example = "123", required = true)
+            @PathVariable Long userId,
+
+            @Parameter(description = "ID of the follower user", example = "456", required = true)
+            @RequestParam Long followerId) {
         String message = followService.followUser(followerId, userId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Unfollow a user",
+            description = "Removes a follow relationship between users"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Successfully unfollowed user",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"You have unfollowed user 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found or not following",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"You are not following this user\"}")
+                    )
+            )
+    })
     @DeleteMapping("/unfollow/{userId}")
-    public ResponseEntity<?> unfollowUser(@PathVariable Long userId, @RequestParam Long followerId) {
+    public ResponseEntity<?> unfollowUser(
+            @Parameter(description = "ID of the user to be unfollowed", example = "123", required = true)
+            @PathVariable Long userId,
+
+            @Parameter(description = "ID of the follower user", example = "456", required = true)
+            @RequestParam Long followerId) {
         String message = followService.unfollowUser(followerId, userId);
         return ResponseEntity.ok(Map.of("message", message));
     }
 
+    @Operation(
+            summary = "Get user followers",
+            description = "Retrieves a list of user IDs who follow the specified user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Followers retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"followers\": [456, 789, 101112]}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/followers/{userId}")
-    public ResponseEntity<?> getFollowers(@PathVariable Long userId) {
+    public ResponseEntity<?> getFollowers(
+            @Parameter(description = "ID of the user to get followers for", example = "123", required = true)
+            @PathVariable Long userId) {
         List<Long> followers = followService.getFollowers(userId);
         return ResponseEntity.ok(Map.of("followers", followers));
     }
 
+    @Operation(
+            summary = "Get user following",
+            description = "Retrieves a list of user IDs that the specified user is following"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Following list retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"following\": [789, 101112, 131415]}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/following/{userId}")
-    public ResponseEntity<?> getFollowing(@PathVariable Long userId) {
+    public ResponseEntity<?> getFollowing(
+            @Parameter(description = "ID of the user to get following list for", example = "123", required = true)
+            @PathVariable Long userId) {
         List<Long> following = followService.getFollowing(userId);
         return ResponseEntity.ok(Map.of("following", following));
     }
@@ -355,32 +834,245 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.divya.linkedinclone.dto.LikeResponse;
-import java.util.Map; // Import for Map
-import com.divya.linkedinclone.exception.PostNotFoundException; // Import for PostNotFoundException
+import java.util.Map;
+import com.divya.linkedinclone.exception.PostNotFoundException;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
 @RestController
 @RequestMapping("/api/likes")
+@Tag(name = "Like Management", description = "Operations for managing post likes including toggling likes and retrieving like counts")
 public class LikeController {
 
     @Autowired
     private LikeService likeService;
 
+    @Operation(
+            summary = "Toggle like on a post",
+            description = "Adds or removes a like from a post. If the user hasn't liked the post, adds a like. If already liked, removes the like."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Like toggled successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = LikeResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post or user not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Post not found with id: 123\"}")
+                    )
+            )
+    })
     @PostMapping("/{postId}")
     public ResponseEntity<LikeResponse> toggleLike(
+            @Parameter(description = "ID of the post to like/unlike", example = "1", required = true)
             @PathVariable Long postId,
+
+            @Parameter(description = "ID of the user performing the like action", example = "1", required = true)
             @RequestParam Long userId
     ) {
         LikeResponse response = likeService.toggleLike(postId, userId);
         return ResponseEntity.ok(response);
     }
 
+    @Operation(
+            summary = "Get like count for a post",
+            description = "Retrieves the total number of likes for a specific post"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Like count retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"postId\": 1, \"likeCount\": 5}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Post not found with id: 123\"}")
+                    )
+            )
+    })
     @GetMapping("/{postId}")
-    public ResponseEntity<?> getLikeCount(@PathVariable Long postId) {
+    public ResponseEntity<?> getLikeCount(
+            @Parameter(description = "ID of the post to get like count for", example = "1", required = true)
+            @PathVariable Long postId
+    ) {
         try {
             Long likeCount = likeService.getLikeCount(postId);
             return ResponseEntity.ok(Map.of("postId", postId, "likeCount", likeCount));
         } catch (PostNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }
+    }
+}
+
+===== .\controller\MessageController.java =====
+
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.entity.Message;
+import com.divya.linkedinclone.dto.MessageResponse;
+import com.divya.linkedinclone.service.MessageService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+import java.util.Map;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+@RestController
+@RequestMapping("/messages")
+@Tag(name = "Message Management", description = "Operations for managing user messages including sending and retrieving conversations")
+public class MessageController {
+
+    @Autowired
+    private MessageService messageService;
+
+    @Operation(
+            summary = "Send a message",
+            description = "Sends a message from one user to another and returns the message details"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Message sent successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = """
+                    {
+                        "message": "Message sent successfully",
+                        "messageId": 123
+                    }
+                    """)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid request format",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Sender or receiver not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            )
+    })
+    @PostMapping("/send")
+    public ResponseEntity<?> sendMessage(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Message details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = """
+                    {
+                        "senderId": 1,
+                        "receiverId": 2,
+                        "message": "Hello there!"
+                    }
+                    """)
+                    )
+            )
+            @RequestBody Map<String, Object> request) {
+        Long senderId = Long.valueOf(request.get("senderId").toString());
+        Long receiverId = Long.valueOf(request.get("receiverId").toString());
+        String message = request.get("message").toString();
+
+        Message sentMessage = messageService.sendMessage(senderId, receiverId, message);
+
+        MessageResponse response = new MessageResponse(
+                sentMessage.getId(),
+                sentMessage.getSender().getId(),
+                sentMessage.getReceiver().getId(),
+                sentMessage.getMessage(),
+                sentMessage.getSentAt()
+        );
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Message sent successfully",
+                "messageId", response.getId()
+        ));
+    }
+
+    @Operation(
+            summary = "Get conversation between two users",
+            description = "Retrieves the complete message history between two specified users"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Conversation retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(type = "array", implementation = MessageResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "One or both users not found",
+                    content = @Content
+            )
+    })
+    @GetMapping("/conversation/{userId1}/{userId2}")
+    public ResponseEntity<List<MessageResponse>> getConversation(
+            @Parameter(description = "ID of the first user in conversation", example = "1", required = true)
+            @PathVariable Long userId1,
+
+            @Parameter(description = "ID of the second user in conversation", example = "2", required = true)
+            @PathVariable Long userId2) {
+        List<MessageResponse> messages = messageService.getConversation(userId1, userId2);
+        return ResponseEntity.ok(messages);
+    }
+
+    @Operation(
+            summary = "Get all conversations for a user",
+            description = "Retrieves all message threads where the specified user is either sender or receiver"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Conversations retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(type = "array", implementation = MessageResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
+    @GetMapping("/conversations/{userId}")
+    public ResponseEntity<List<MessageResponse>> getAllConversations(
+            @Parameter(description = "ID of the user to retrieve conversations for", example = "1", required = true)
+            @PathVariable Long userId) {
+        List<MessageResponse> conversations = messageService.getAllConversations(userId);
+        return ResponseEntity.ok(conversations);
     }
 }
 
@@ -396,31 +1088,139 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.List;
 import com.divya.linkedinclone.dto.NotificationResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequestMapping("/api/notifications")
+@Tag(name = "Notification Management", description = "Operations for managing user notifications including retrieval and status updates")
 public class NotificationController {
 
     @Autowired
     private NotificationService notificationService;
 
-    // Get all unread notifications for a user
+    @Operation(
+            summary = "Get unread notifications",
+            description = "Retrieves all unread notifications for a specific user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Unread notifications retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = """
+                    {
+                        "unreadNotifications": [
+                            {
+                                "id": 1,
+                                "senderId": 2,
+                                "senderName": "John Doe",
+                                "message": "You have a new connection request",
+                                "status": "UNREAD",
+                                "createdAt": "2023-05-15T10:30:00"
+                            }
+                        ]
+                    }
+                    """)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            )
+    })
     @GetMapping("/unread")
-    public ResponseEntity<?> getUnreadNotifications(@RequestParam Long userId) {
+    public ResponseEntity<?> getUnreadNotifications(
+            @Parameter(description = "ID of the user to retrieve notifications for", example = "1", required = true)
+            @RequestParam Long userId) {
         List<NotificationResponse> unreadNotifications = notificationService.getUnreadNotifications(userId);
         return ResponseEntity.ok(Map.of("unreadNotifications", unreadNotifications));
     }
 
-    // Get all notifications for a user
+    @Operation(
+            summary = "Get all notifications",
+            description = "Retrieves all notifications (both read and unread) for a specific user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "All notifications retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = """
+                    {
+                        "allNotifications": [
+                            {
+                                "id": 1,
+                                "senderId": 2,
+                                "senderName": "John Doe",
+                                "message": "You have a new connection request",
+                                "status": "READ",
+                                "createdAt": "2023-05-15T10:30:00"
+                            },
+                            {
+                                "id": 2,
+                                "senderId": 3,
+                                "senderName": "Jane Smith",
+                                "message": "Liked your post",
+                                "status": "UNREAD",
+                                "createdAt": "2023-05-16T11:45:00"
+                            }
+                        ]
+                    }
+                    """)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/all")
-    public ResponseEntity<?> getAllNotifications(@RequestParam Long userId) {
+    public ResponseEntity<?> getAllNotifications(
+            @Parameter(description = "ID of the user to retrieve notifications for", example = "1", required = true)
+            @RequestParam Long userId) {
         List<NotificationResponse> allNotifications = notificationService.getAllNotifications(userId);
         return ResponseEntity.ok(Map.of("allNotifications", allNotifications));
     }
 
-    // Mark a notification as read
+    @Operation(
+            summary = "Mark notification as read",
+            description = "Updates the status of a notification to 'READ'"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Notification marked as read successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Notification marked as read.\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Notification not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Notification not found with id: 123\"}")
+                    )
+            )
+    })
     @PostMapping("/mark-as-read/{notificationId}")
-    public ResponseEntity<?> markNotificationAsRead(@PathVariable Long notificationId) {
+    public ResponseEntity<?> markNotificationAsRead(
+            @Parameter(description = "ID of the notification to mark as read", example = "1", required = true)
+            @PathVariable Long notificationId) {
         notificationService.markNotificationAsRead(notificationId);
         return ResponseEntity.ok(Map.of("message", "Notification marked as read."));
     }
@@ -440,6 +1240,13 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 import java.io.IOException;
 import java.util.List;
@@ -447,14 +1254,50 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/posts")
+@Tag(name = "Post Management", description = "Operations for creating, retrieving, updating, and deleting posts")
 public class PostController {
 
     @Autowired
     private PostService postService;
 
-    // Create a new post
+    @Operation(
+            summary = "Create a new post",
+            description = "Creates a new text post with the provided content"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "201",
+                    description = "Post created successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = PostResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid request body",
+                    content = @Content
+            )
+    })
     @PostMapping
-    public ResponseEntity<?> createPost(@RequestBody CreatePostRequest createPostRequest) {
+    public ResponseEntity<?> createPost(
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Post creation details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(implementation = CreatePostRequest.class)
+                    )
+            )
+            @RequestBody CreatePostRequest createPostRequest
+    ) {
         try {
             Post createdPost = postService.createPost(createPostRequest.getUserId(), createPostRequest.getContent());
             return ResponseEntity.status(HttpStatus.CREATED).body(new PostResponse(createdPost));
@@ -463,11 +1306,39 @@ public class PostController {
         }
     }
 
-    // Create a post with an image
+    @Operation(
+            summary = "Create a post with image",
+            description = "Creates a new post with both text content and an image file"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "201",
+                    description = "Post with image created successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = PostResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "500",
+                    description = "Image upload failed",
+                    content = @Content
+            )
+    })
     @PostMapping("/image")
     public ResponseEntity<?> createPostWithImage(
+            @Parameter(description = "ID of the user creating the post", example = "1", required = true)
             @RequestParam("userId") Long userId,
+
+            @Parameter(description = "Text content of the post", example = "Check out this cool photo!", required = true)
             @RequestParam("content") String content,
+
+            @Parameter(description = "Image file to upload", required = true)
             @RequestParam("image") MultipartFile image) {
         try {
             Post createdPost = postService.createPostWithImage(userId, content, image);
@@ -479,9 +1350,29 @@ public class PostController {
         }
     }
 
-    // Get all posts by a user
+    @Operation(
+            summary = "Get posts by user",
+            description = "Retrieves all posts created by a specific user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Post retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = PostResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/users/{userId}/posts")
-    public ResponseEntity<?> getPostsByUserId(@PathVariable Long userId) {
+    public ResponseEntity<?> getPostsByUserId(
+            @Parameter(description = "ID of the user to retrieve posts for", example = "1", required = true)
+            @PathVariable Long userId) {
         try {
             List<Post> posts = postService.getPostsByUserId(userId);
             List<PostResponse> postResponses = posts.stream()
@@ -493,9 +1384,29 @@ public class PostController {
         }
     }
 
-    // Get a specific post by ID
+    @Operation(
+            summary = "Get post by ID",
+            description = "Retrieves a single post by its unique identifier"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Post retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = PostResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/{postId}")
-    public ResponseEntity<?> getPostById(@PathVariable Long postId) {
+    public ResponseEntity<?> getPostById(
+            @Parameter(description = "ID of the post to retrieve", example = "1", required = true)
+            @PathVariable Long postId) {
         try {
             Post post = postService.getPostById(postId);
             return ResponseEntity.ok(new PostResponse(post));
@@ -504,7 +1415,18 @@ public class PostController {
         }
     }
 
-    // Get all posts
+    @Operation(
+            summary = "Get all posts",
+            description = "Retrieves all posts in the system, ordered by creation date (newest first)"
+    )
+    @ApiResponse(
+            responseCode = "200",
+            description = "Posts retrieved successfully",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(type = "array", implementation = PostResponse.class)
+            )
+    )
     @GetMapping
     public ResponseEntity<List<PostResponse>> getAllPosts() {
         List<Post> posts = postService.getAllPosts();
@@ -514,11 +1436,40 @@ public class PostController {
         return ResponseEntity.ok(postResponses);
     }
 
-    // Update a post
+    @Operation(
+            summary = "Update post content",
+            description = "Updates the text content of an existing post"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Post updated successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = PostResponse.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content
+            )
+    })
     @PutMapping("/{postId}")
-    public ResponseEntity<?> updatePost(@PathVariable Long postId, @RequestBody Map<String, String> request) {
+    public ResponseEntity<?> updatePost(
+            @Parameter(description = "ID of the post to update", example = "1", required = true)
+            @PathVariable Long postId,
+
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "New post content",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(example = "{\"content\": \"Updated post content\"}")
+                    )
+            )
+            @RequestBody Map<String, String> request) {
         try {
-            String newContent = request.get("content"); // Get the new content from the request body
+            String newContent = request.get("content");
             Post updatedPost = postService.updatePost(postId, newContent);
             return ResponseEntity.ok(new PostResponse(updatedPost));
         } catch (RuntimeException e) {
@@ -526,9 +1477,29 @@ public class PostController {
         }
     }
 
-    // Delete a post by ID
+    @Operation(
+            summary = "Delete a post",
+            description = "Permanently deletes a post from the system"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Post deleted successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Post deleted successfully!\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Post not found",
+                    content = @Content
+            )
+    })
     @DeleteMapping("/{postId}")
-    public ResponseEntity<?> deletePost(@PathVariable Long postId) {
+    public ResponseEntity<?> deletePost(
+            @Parameter(description = "ID of the post to delete", example = "1", required = true)
+            @PathVariable Long postId) {
         try {
             postService.deletePost(postId);
             return ResponseEntity.ok(Map.of("message", "Post deleted successfully!"));
@@ -553,27 +1524,111 @@ import com.divya.linkedinclone.service.ProfileService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 
 @RestController
 @RequestMapping("/api/profiles")
+@Tag(name = "Profile Management", description = "Operations for managing user profiles including creation, retrieval, and updates")
 public class ProfileController {
 
     @Autowired
     private ProfileService profileService;
 
     @Autowired
-    private ProfileRepository profileRepository; // Autowire ProfileRepository
+    private ProfileRepository profileRepository;
 
-    // Create or update a profile
-    @PostMapping("/{userId}")
-    public ResponseEntity<Profile> createOrUpdateProfile(@PathVariable Long userId, @RequestBody Profile profile) {
+    @Operation(
+            summary = "Create or update profile",
+            description = "Creates a new profile or updates an existing one for the specified user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Profile saved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = Profile.class)
+                    )
+            ),
+            @ApiResponse(  // Fixed: properly closed previous @ApiResponse
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"User not found with id: 123\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid profile data",
+                    content = @Content
+            )
+    })  // Fixed: properly closed @ApiResponses
+            @PostMapping("/{userId}")
+    public ResponseEntity<Profile> createOrUpdateProfile(
+            @Parameter(description = "ID of the user to create/update profile for", example = "1", required = true)
+            @PathVariable Long userId,
+
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Profile details",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(implementation = Profile.class)
+                    ))
+            @RequestBody Profile profile
+    ) {
         Profile savedProfile = profileService.createOrUpdateProfile(userId, profile);
         return ResponseEntity.ok(savedProfile);
     }
 
-    // Get profile by user ID
+    @Operation(
+            summary = "Get profile by user ID",
+            description = "Retrieves complete profile information for a specific user"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Profile retrieved successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = """
+                    {
+                        "id": 1,
+                        "user": {
+                            "id": 1,
+                            "name": "John Doe",
+                            "email": "john@example.com"
+                        },
+                        "bio": "Software Engineer",
+                        "profilePicture": "/uploads/profile1.jpg",
+                        "skills": "Java, Spring Boot",
+                        "experience": "5 years at Tech Corp",
+                        "education": "MS in Computer Science",
+                        "location": "New York",
+                        "website": "https://john.dev"
+                    }
+                    """)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Profile not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Profile not found for user id: 123\"}")
+                    )
+            )
+    })
     @GetMapping("/{userId}")
-    public ResponseEntity<?> getProfileByUserId(@PathVariable Long userId) {
+    public ResponseEntity<?> getProfileByUserId(
+            @Parameter(description = "ID of the user to retrieve profile for", example = "1", required = true)
+            @PathVariable Long userId) {
         Profile profile = profileService.getProfileByUserId(userId);
         Map<String, Object> response = new HashMap<>();
         response.put("id", profile.getId());
@@ -592,21 +1647,62 @@ public class ProfileController {
         return ResponseEntity.ok(response);
     }
 
-    // Get all profiles
+    @Operation(
+            summary = "Get all profiles",
+            description = "Retrieves a list of all user profiles in the system"
+    )
+    @ApiResponse(
+            responseCode = "200",
+            description = "Profiles retrieved successfully",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(type = "array", implementation = Profile.class)
+            )
+    )
     @GetMapping
     public ResponseEntity<List<Profile>> getAllProfiles() {
         List<Profile> profiles = profileRepository.findAll();
         return ResponseEntity.ok(profiles);
     }
 
-    // Update a profile by ID
+    @Operation(
+            summary = "Update profile by ID",
+            description = "Updates specific fields of an existing profile"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Profile updated successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = Profile.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Profile not found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"error\": \"Profile not found with id: 123\"}")
+                    )
+            )
+    })
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateProfile(@PathVariable Long id, @RequestBody Profile updatedProfile) {
-        // Check if the profile exists
+    public ResponseEntity<?> updateProfile(
+            @Parameter(description = "ID of the profile to update", example = "1", required = true)
+            @PathVariable Long id,
+
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Updated profile fields",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(implementation = Profile.class)
+                    ))
+            @RequestBody Profile updatedProfile
+    ) {
         Optional<Profile> optionalProfile = profileRepository.findById(id);
 
         if (optionalProfile.isPresent()) {
-            // Update the existing profile
             Profile profile = optionalProfile.get();
             profile.setBio(updatedProfile.getBio());
             profile.setProfilePicture(updatedProfile.getProfilePicture());
@@ -616,18 +1712,36 @@ public class ProfileController {
             profile.setLocation(updatedProfile.getLocation());
             profile.setWebsite(updatedProfile.getWebsite());
 
-            // Save the updated profile
             Profile savedProfile = profileRepository.save(profile);
             return ResponseEntity.ok(savedProfile);
         } else {
-            // Return a 404 Not Found response if the profile doesn't exist
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Profile not found with id: " + id));
         }
     }
 
-    // Delete a profile by ID
+    @Operation(
+            summary = "Delete profile by ID",
+            description = "Permanently deletes a user profile"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Profile deleted successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(example = "{\"message\": \"Profile deleted successfully\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "Profile not found",
+                    content = @Content
+            )
+    })
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteProfile(@PathVariable Long id) {
+    public ResponseEntity<?> deleteProfile(
+            @Parameter(description = "ID of the profile to delete", example = "1", required = true)
+            @PathVariable Long id) {
         profileService.deleteProfile(id);
         return ResponseEntity.ok(Map.of("message", "Profile deleted successfully"));
     }
@@ -637,6 +1751,13 @@ public class ProfileController {
 
 package com.divya.linkedinclone.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.HashMap;
 import java.util.Map;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -657,8 +1778,10 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
 @RestController
 @RequestMapping("/api/users")
+@Tag(name = "User Management", description = "Operations related to user management including registration, authentication, and CRUD operations")
 public class UserController {
 
     @Autowired
@@ -676,7 +1799,30 @@ public class UserController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    // Register a new user
+    @Operation(
+            summary = "Register a new user",
+            description = "Creates a new user account with the provided details. Returns the user ID upon successful registration."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "User registered successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = Map.class, example = "{\"message\": \"User registered successfully!\", \"userId\": 1}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid input data",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "409",
+                    description = "Email already exists",
+                    content = @Content
+            )
+    })
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@Valid @RequestBody UserRegistrationRequest registrationRequest) {
         User registeredUser = userService.registerUser(registrationRequest);
@@ -686,12 +1832,28 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
-    // Login a user and return a JWT token
-    // In UserController.java
+    @Operation(
+            summary = "Authenticate user",
+            description = "Authenticates a user with email and password, returns a JWT token upon successful authentication."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Login successful",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = Map.class, example = "{\"message\": \"Login successful!\", \"userId\": 1, \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description = "Invalid credentials",
+                    content = @Content
+            )
+    })
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest loginRequest) {
         try {
-            // Authenticate the user
             UsernamePasswordAuthenticationToken authToken =
                     new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword());
             authenticationManager.authenticate(authToken);
@@ -699,37 +1861,102 @@ public class UserController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid email or password");
         }
 
-        // Load user details and generate a JWT token
         final UserDetails userDetails = userService.loadUserByUsername(loginRequest.getEmail());
         final String jwt = jwtUtil.generateToken(userDetails);
 
-        // Fetch the user ID
         User user = userRepository.findByEmail(loginRequest.getEmail())
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + loginRequest.getEmail()));
 
-        // Return the response
         Map<String, Object> response = new HashMap<>();
         response.put("message", "Login successful!");
         response.put("userId", user.getId());
         response.put("token", jwt);
         return ResponseEntity.ok(response);
     }
-    //get all user
+
+    @Operation(
+            summary = "Get all users",
+            description = "Retrieves a list of all registered users in the system."
+    )
+    @ApiResponse(
+            responseCode = "200",
+            description = "List of users retrieved successfully",
+            content = @Content(
+                    mediaType = "application/json",
+                    schema = @Schema(implementation = User.class, type = "array")
+            )
+    )
     @GetMapping
     public ResponseEntity<List<User>> getAllUsers() {
         List<User> users = userRepository.findAll();
         return ResponseEntity.ok(users);
     }
-    //Get a User by ID
+
+    @Operation(
+            summary = "Get user by ID",
+            description = "Retrieves a single user by their unique identifier."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "User found",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = User.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @GetMapping("/{id}")
-    public ResponseEntity<User> getUserById(@PathVariable Long id) {
+    public ResponseEntity<User> getUserById(
+            @Parameter(description = "ID of the user to be retrieved", example = "1", required = true)
+            @PathVariable Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         return ResponseEntity.ok(user);
     }
-    // Update a User (PUT /api/users/{id})
+
+    @Operation(
+            summary = "Update user",
+            description = "Updates the details of an existing user. All fields will be updated with the provided values."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "User updated successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = User.class)
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description = "Invalid input data",
+                    content = @Content
+            )
+    })
     @PutMapping("/{id}")
-    public ResponseEntity<User> updateUser(@PathVariable Long id, @RequestBody User updatedUser) {
+    public ResponseEntity<User> updateUser(
+            @Parameter(description = "ID of the user to be updated", example = "1", required = true)
+            @PathVariable Long id,
+
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    description = "Updated user object",
+                    required = true,
+                    content = @Content(
+                            schema = @Schema(implementation = User.class)
+                    )
+            )
+            @RequestBody User updatedUser) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
         user.setName(updatedUser.getName());
@@ -738,9 +1965,30 @@ public class UserController {
         userRepository.save(user);
         return ResponseEntity.ok(user);
     }
-    // Delete a User (DELETE /api/users/{id})
+
+    @Operation(
+            summary = "Delete user",
+            description = "Deletes a user from the system by their ID."
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "User deleted successfully",
+                    content = @Content(
+                            mediaType = "application/json",
+                            schema = @Schema(implementation = Map.class, example = "{\"message\": \"User deleted successfully\"}")
+                    )
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "User not found",
+                    content = @Content
+            )
+    })
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteUser(@PathVariable Long id) {
+    public ResponseEntity<?> deleteUser(
+            @Parameter(description = "ID of the user to be deleted", example = "1", required = true)
+            @PathVariable Long id) {
         userRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
     }
@@ -751,16 +1999,50 @@ public class UserController {
 package com.divya.linkedinclone.dto;
 
 import com.divya.linkedinclone.entity.Comment;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 import java.time.LocalDateTime;
+
 @Getter
 @Setter
+@Schema(description = "Response object representing a comment on a post")
 public class CommentResponse {
+
+    @Schema(
+            description = "Unique identifier of the comment",
+            example = "1",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long id;
+
+    @Schema(
+            description = "Text content of the comment",
+            example = "This is an insightful post!",
+            required = true,
+            maxLength = 1000
+    )
     private String content;
+
+    @Schema(
+            description = "Timestamp when the comment was created",
+            example = "2023-05-15T14:30:00",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private LocalDateTime createdAt;
+
+    @Schema(
+            description = "ID of the post this comment belongs to",
+            example = "5",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long postId;
+
+    @Schema(
+            description = "ID of the user who created the comment",
+            example = "10",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long userId;
 
     public CommentResponse(Comment comment) {
@@ -776,14 +2058,38 @@ public class CommentResponse {
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@Schema(description = "Response object representing a connection between users")
 public class ConnectionResponse {
+
+    @Schema(
+            description = "Unique identifier of the user who initiated the connection",
+            example = "123",
+            required = true,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long senderId;
+
+    @Schema(
+            description = "Name of the user who initiated the connection",
+            example = "John Doe",
+            required = true,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String senderName;
+
+    @Schema(
+            description = "Current status of the connection",
+            example = "PENDING",
+            required = true,
+            allowableValues = {"PENDING", "CONNECTED", "REJECTED"},
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String status;
 
     public ConnectionResponse(Long senderId, String senderName, String status) {
@@ -797,8 +2103,29 @@ public class ConnectionResponse {
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+
+@Schema(description = "Request object for creating a new post")
 public class CreatePostRequest {
+
+    @Schema(
+            description = "Content/text of the post",
+            example = "Check out this amazing new feature we just launched!",
+            required = true,
+            minLength = 1,
+            maxLength = 1000
+    )
+    @NotBlank(message = "Content cannot be blank")
     private String content;
+
+    @Schema(
+            description = "ID of the user creating the post",
+            example = "123",
+            required = true
+    )
+    @NotNull(message = "User ID cannot be null")
     private Long userId;
 
     // Getters and Setters
@@ -823,14 +2150,38 @@ public class CreatePostRequest {
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@Schema(description = "Response object representing a like action on a post")
 public class LikeResponse {
+
+    @Schema(
+            description = "ID of the post that was liked/unliked",
+            example = "456",
+            required = true,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long postId;
+
+    @Schema(
+            description = "ID of the user who performed the like action",
+            example = "123",
+            required = true,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long userId;
+
+    @Schema(
+            description = "Total number of likes on the post after this action",
+            example = "42",
+            required = true,
+            minimum = "0",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long likeCount;
 
     public LikeResponse(Long postId, Long userId, Long likeCount) {
@@ -844,15 +2195,32 @@ public class LikeResponse {
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
+@Schema(description = "Request object for user authentication")
 public class LoginRequest {
 
+    @Schema(
+            description = "User's registered email address",
+            example = "user@example.com",
+            required = true,
+            format = "email",
+            maxLength = 100
+    )
     @NotBlank(message = "Email is required")
     @Email(message = "Invalid email format")
     private String email;
 
+    @Schema(
+            description = "User's password",
+            example = "securePassword123!",
+            required = true,
+            minLength = 8,
+            maxLength = 50,
+            format = "password"
+    )
     @NotBlank(message = "Password is required")
     private String password;
 
@@ -874,10 +2242,11 @@ public class LoginRequest {
     }
 }
 
-===== .\dto\NotificationResponse.java =====
+===== .\dto\MessageResponse.java =====
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -885,12 +2254,111 @@ import java.time.LocalDateTime;
 
 @Getter
 @Setter
-public class NotificationResponse {
+@Schema(description = "Response object representing a message between users")
+public class MessageResponse {
+
+    @Schema(
+            description = "Unique identifier of the message",
+            example = "1",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long id;
+
+    @Schema(
+            description = "ID of the user who sent the message",
+            example = "101",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long senderId;
-    private String senderName;
+
+    @Schema(
+            description = "ID of the user who received the message",
+            example = "102",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private Long receiverId;
+
+    @Schema(
+            description = "Content of the message",
+            example = "Hello! How are you doing?",
+            maxLength = 2000,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String message;
+
+    @Schema(
+            description = "Timestamp when the message was sent",
+            example = "2023-05-15T14:30:45",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private LocalDateTime sentAt;
+
+    public MessageResponse(Long id, Long senderId, Long receiverId, String message, LocalDateTime sentAt) {
+        this.id = id;
+        this.senderId = senderId;
+        this.receiverId = receiverId;
+        this.message = message;
+        this.sentAt = sentAt;
+    }
+}
+
+===== .\dto\NotificationResponse.java =====
+
+package com.divya.linkedinclone.dto;
+
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+@Schema(description = "Response object representing a user notification")
+public class NotificationResponse {
+
+    @Schema(
+            description = "Unique identifier of the notification",
+            example = "1",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private Long id;
+
+    @Schema(
+            description = "ID of the user who triggered the notification",
+            example = "101",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private Long senderId;
+
+    @Schema(
+            description = "Name of the user who triggered the notification",
+            example = "John Doe",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private String senderName;
+
+    @Schema(
+            description = "Notification message content",
+            example = "You have a new connection request",
+            maxLength = 500,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private String message;
+
+    @Schema(
+            description = "Current status of the notification",
+            example = "UNREAD",
+            allowableValues = {"READ", "UNREAD"},
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String status;
+
+    @Schema(
+            description = "Timestamp when the notification was created",
+            example = "2023-05-15T14:30:45",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private LocalDateTime createdAt;
 
     public NotificationResponse(Long id, Long senderId, String senderName, String message, String status, LocalDateTime createdAt) {
@@ -909,6 +2377,7 @@ package com.divya.linkedinclone.dto;
 
 import com.divya.linkedinclone.entity.Post;
 import com.divya.linkedinclone.entity.User;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -916,19 +2385,75 @@ import java.time.LocalDateTime;
 
 @Getter
 @Setter
+@Schema(description = "Response object representing a post with author details")
 public class PostResponse {
+
+    @Schema(
+            description = "Unique identifier of the post",
+            example = "1",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private Long id;
+
+    @Schema(
+            description = "Text content of the post",
+            example = "Check out this amazing new feature we launched!",
+            maxLength = 2000,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String content;
+
+    @Schema(
+            description = "Timestamp when the post was created",
+            example = "2023-05-15T10:30:00",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private LocalDateTime createdAt;
+
+    @Schema(
+            description = "Timestamp when the post was last updated",
+            example = "2023-05-15T11:45:00",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private LocalDateTime updatedAt;
+
+    @Schema(
+            description = "Path to the post's image if available",
+            example = "/uploads/posts/123-image.jpg",
+            nullable = true,
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
     private String imagePath;
-    private UserResponse user; // Include user details
+
+    @Schema(
+            description = "Author details of the post",
+            accessMode = Schema.AccessMode.READ_ONLY
+    )
+    private UserResponse user;
 
     @Getter
     @Setter
+    @Schema(description = "Nested user information")
     public static class UserResponse {
+        @Schema(
+                description = "User ID of the post author",
+                example = "101",
+                accessMode = Schema.AccessMode.READ_ONLY
+        )
         private Long id;
+
+        @Schema(
+                description = "Name of the post author",
+                example = "John Doe",
+                accessMode = Schema.AccessMode.READ_ONLY
+        )
         private String name;
+
+        @Schema(
+                description = "Email of the post author",
+                example = "john.doe@example.com",
+                accessMode = Schema.AccessMode.READ_ONLY
+        )
         private String email;
 
         public UserResponse(User user) {
@@ -944,7 +2469,7 @@ public class PostResponse {
         this.createdAt = post.getCreatedAt();
         this.updatedAt = post.getUpdatedAt();
         this.imagePath = post.getImagePath();
-        this.user = new UserResponse(post.getUser()); // Include user details
+        this.user = new UserResponse(post.getUser());
     }
 }
 
@@ -952,20 +2477,43 @@ public class PostResponse {
 
 package com.divya.linkedinclone.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-// In UserRegistrationRequest.java
+@Schema(description = "Request object for registering a new user account")
 public class UserRegistrationRequest {
 
+    @Schema(
+            description = "Full name of the user",
+            example = "John Doe",
+            required = true,
+            minLength = 2,
+            maxLength = 100
+    )
     @NotBlank(message = "Name is required")
     private String name;
 
+    @Schema(
+            description = "Email address for the user account",
+            example = "john.doe@example.com",
+            required = true,
+            format = "email",
+            maxLength = 100
+    )
     @NotBlank(message = "Email is required")
     @Email(message = "Invalid email format")
     private String email;
 
+    @Schema(
+            description = "Password for the user account",
+            example = "SecurePassword123!",
+            required = true,
+            minLength = 8,
+            maxLength = 50,
+            format = "password"
+    )
     @NotBlank(message = "Password is required")
     @Size(min = 8, message = "Password must be at least 8 characters long")
     private String password;
@@ -994,7 +2542,6 @@ public class UserRegistrationRequest {
     public void setPassword(String password) {
         this.password = password;
     }
-
 }
 
 ===== .\entity\Comment.java =====
@@ -1136,6 +2683,44 @@ public class Like {
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
+}
+
+===== .\entity\Message.java =====
+
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "messages")
+@EntityListeners(AuditingEntityListener.class)
+public class Message {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne
+    @JoinColumn(name = "sender_id", nullable = false)
+    private User sender;
+
+    @ManyToOne
+    @JoinColumn(name = "receiver_id", nullable = false)
+    private User receiver;
+
+    @Column(nullable = false) // Use "message" instead of "content"
+    private String message; // Changed from "content" to "message"
+
+    @CreatedDate
+    private LocalDateTime sentAt;
 }
 
 ===== .\entity\Notification.java =====
@@ -1520,6 +3105,22 @@ import java.util.Optional;
 public interface LikeRepository extends JpaRepository<Like, Long> {
     Optional<Like> findByPostIdAndUserId(Long postId, Long userId);
     Long countByPostId(Long postId);
+}
+
+===== .\repository\MessageRepository.java =====
+
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Message;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface MessageRepository extends JpaRepository<Message, Long> {
+    List<Message> findBySenderIdAndReceiverId(Long senderId, Long receiverId);
+    List<Message> findBySenderIdOrReceiverId(Long userId1, Long userId2);
 }
 
 ===== .\repository\NotificationRepository.java =====
@@ -1971,6 +3572,76 @@ public class LikeService {
     }
 }
 
+===== .\service\MessageService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.Message;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+import com.divya.linkedinclone.repository.MessageRepository;
+import com.divya.linkedinclone.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.divya.linkedinclone.dto.MessageResponse;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+public class MessageService {
+
+    @Autowired
+    private MessageRepository messageRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    public Message sendMessage(Long senderId, Long receiverId, String message) {
+        User sender = userRepository.findById(senderId)
+                .orElseThrow(() -> new UserNotFoundException("Sender not found with id: " + senderId));
+        User receiver = userRepository.findById(receiverId)
+                .orElseThrow(() -> new UserNotFoundException("Receiver not found with id: " + receiverId));
+
+        Message newMessage = new Message();
+        newMessage.setSender(sender);
+        newMessage.setReceiver(receiver);
+        newMessage.setMessage(message); // Ensure this is correctly defined
+        newMessage.setSentAt(LocalDateTime.now());
+
+        return messageRepository.save(newMessage); // Return the Message entity
+    }
+
+    public List<MessageResponse> getConversation(Long userId1, Long userId2) {
+        List<Message> messages = messageRepository.findBySenderIdAndReceiverId(userId1, userId2);
+        messages.addAll(messageRepository.findBySenderIdAndReceiverId(userId2, userId1));
+
+        return messages.stream()
+                .map(message -> new MessageResponse(
+                        message.getId(),
+                        message.getSender().getId(),
+                        message.getReceiver().getId(),
+                        message.getMessage(), // Changed from "getContent" to "getMessage"
+                        message.getSentAt()
+                ))
+                .collect(Collectors.toList());
+    }
+
+    public List<MessageResponse> getAllConversations(Long userId) {
+        List<Message> messages = messageRepository.findBySenderIdOrReceiverId(userId, userId);
+
+        return messages.stream()
+                .map(message -> new MessageResponse(
+                        message.getId(),
+                        message.getSender().getId(),
+                        message.getReceiver().getId(),
+                        message.getMessage(), // Changed from "getContent" to "getMessage"
+                        message.getSentAt()
+                ))
+                .collect(Collectors.toList());
+    }
+}
+
 ===== .\service\NotificationService.java =====
 
 package com.divya.linkedinclone.service;
@@ -2336,7 +4007,7 @@ import io.jsonwebtoken.security.Keys;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
-import java.util.Base64;
+import javax.crypto.SecretKey;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -2344,7 +4015,8 @@ import java.util.function.Function;
 
 @Component
 public class JwtUtil {
-    private static final String SECRET_KEY = Base64.getEncoder().encodeToString("super_secure_key_12345".getBytes());
+    // Using Keys to generate a secure key
+    private final SecretKey secretKey = Keys.secretKeyFor(SignatureAlgorithm.HS256);
     private static final long EXPIRATION_TIME = 864_000_000; // 10 days
 
     public String extractUsername(String token) {
@@ -2361,11 +4033,11 @@ public class JwtUtil {
     }
 
     private Claims extractAllClaims(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(SECRET_KEY.getBytes())
+        return Jwts.parser()
+                .verifyWith(secretKey)
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
     private Boolean isTokenExpired(String token) {
@@ -2379,11 +4051,11 @@ public class JwtUtil {
 
     private String createToken(Map<String, Object> claims, String subject) {
         return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(subject)
-                .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
-                .signWith(Keys.hmacShaKeyFor(SECRET_KEY.getBytes()), SignatureAlgorithm.HS256)
+                .claims(claims)
+                .subject(subject)
+                .issuedAt(new Date(System.currentTimeMillis()))
+                .expiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(secretKey)
                 .compact();
     }
 
