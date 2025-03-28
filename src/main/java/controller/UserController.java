@@ -107,4 +107,12 @@ public class UserController {
         userRepository.deleteById(id);
         return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
     }
+
+    // Add this to UserController.java
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(@RequestHeader("Authorization") String authHeader) {
+        String token = authHeader.substring(7);
+        jwtUtil.invalidateToken(token);
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+    }
 }

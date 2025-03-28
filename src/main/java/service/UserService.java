@@ -12,10 +12,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import com.divya.linkedinclone.exception.UserNotFoundException;
-
+import java.util.Set;
+import java.util.List;
 import java.util.Collections;
 import java.util.Optional;
-
+import java.util.Map;
 @Service
 public class UserService implements UserDetailsService {
 
@@ -40,6 +41,7 @@ public class UserService implements UserDetailsService {
         user.setName(registrationRequest.getName());
         user.setEmail(registrationRequest.getEmail());
         user.setPassword(passwordEncoder.encode(registrationRequest.getPassword()));
+        user.setRoles(Set.of("USER")); // Assign default role
 
         User savedUser = userRepository.save(user);
 

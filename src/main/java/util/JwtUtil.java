@@ -11,12 +11,14 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 @Component
 public class JwtUtil {
     private static final String SECRET_KEY = Base64.getEncoder().encodeToString("super_secure_key_12345".getBytes());
-    private static final long EXPIRATION_TIME = 864_000_000; // 10 days
+    private static final long EXPIRATION_TIME = TimeUnit.MINUTES.toMillis(30); // 30 minutes
+    private static final Map<String, Date> invalidatedTokens = new HashMap<>();
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
@@ -40,7 +42,7 @@ public class JwtUtil {
     }
 
     private Boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
+        return extractExpiration(token).before(new Date()) || invalidatedTokens.containsKey(token);
     }
 
     public String generateToken(UserDetails userDetails) {
@@ -61,5 +63,9 @@ public class JwtUtil {
     public Boolean validateToken(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
+    }
+
+    public void invalidateToken(String token) {
+        invalidatedTokens.put(token, extractExpiration(token));
     }
 }
