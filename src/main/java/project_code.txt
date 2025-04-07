@@ -94,8 +94,10 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 
 @Configuration
+@EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtRequestFilter jwtRequestFilter;
@@ -113,6 +115,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/api/users/register", "/api/users/login").permitAll()
+                        .requestMatchers("/api/admin/register").permitAll() // Add this line
+                        .requestMatchers("/api/admin/login").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/user/**").hasAnyRole("USER", "ADMIN")
                         .anyRequest().authenticated()
@@ -173,6 +177,123 @@ public class WebConfig implements WebMvcConfigurer {
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         registry.addResourceHandler("/uploads/**")
                 .addResourceLocations("file:" + uploadDirectory + "/");
+    }
+}
+
+===== .\controller\AdminController.java =====
+
+// .\controller\AdminController.java
+package com.divya.linkedinclone.controller;
+
+import com.divya.linkedinclone.dto.AdminLoginRequest;
+import com.divya.linkedinclone.dto.AdminRegistrationRequest;
+import com.divya.linkedinclone.dto.AdminResponse;
+import com.divya.linkedinclone.entity.Admin;
+import com.divya.linkedinclone.service.AdminService;
+import com.divya.linkedinclone.service.UserService;
+import com.divya.linkedinclone.util.JwtUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+
+@RestController
+@RequestMapping("/api/admin")
+public class AdminController {
+
+    @Autowired
+    private AdminService adminService;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @PostMapping("/register")
+    public ResponseEntity<?> registerAdmin(@RequestBody AdminRegistrationRequest registrationRequest) {
+        try {
+            Admin admin = adminService.registerAdmin(registrationRequest);
+            AdminResponse response = new AdminResponse(
+                    admin.getId(),
+                    admin.getUsername(),
+                    admin.getEmail(),
+                    admin.getRole(),
+                    admin.getIsActive(),
+                    admin.getCreatedAt(),
+                    admin.getUpdatedAt()
+            );
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<?> loginAdmin(@RequestBody AdminLoginRequest loginRequest) {
+        try {
+            Admin admin = adminService.authenticateAdmin(loginRequest.getUsername(), loginRequest.getPassword());
+
+            // Add roles claim to the token
+            Map<String, Object> claims = new HashMap<>();
+            claims.put("roles", Collections.singletonList(admin.getRole()));
+
+            // Generate JWT token with authorities - FIXED SYNTAX
+            final String jwt = jwtUtil.generateToken(
+                    new org.springframework.security.core.userdetails.User(
+                            admin.getUsername(),
+                            admin.getPassword(),
+                            Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + admin.getRole())))
+            ); // This closing parenthesis was missing
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("token", jwt);
+            response.put("role", admin.getRole());
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/users")
+    public ResponseEntity<?> getAllUsers() {
+        try {
+            // This should be implemented in UserService to return simplified user data
+            List<Map<String, Object>> users = userService.getAllUsersForAdmin();
+            return ResponseEntity.ok(users);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to fetch users"));
+        }
+    }
+
+    @GetMapping("/users/{userId}")
+    public ResponseEntity<?> getUserById(@PathVariable Long userId) {
+        try {
+            Map<String, Object> user = userService.getUserByIdForAdmin(userId);
+            return ResponseEntity.ok(user);
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @DeleteMapping("/users/{userId}")
+    public ResponseEntity<?> deleteUser(@PathVariable Long userId) {
+        try {
+            userService.deleteUserByAdmin(userId);
+            return ResponseEntity.ok(Map.of("message", "User deleted successfully"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", e.getMessage()));
+        }
     }
 }
 
@@ -616,12 +737,15 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.ProfileRepository;
 import com.divya.linkedinclone.service.ProfileService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import com.divya.linkedinclone.util.JwtUtil;
 import org.springframework.web.bind.annotation.*;
-
+import com.divya.linkedinclone.repository.UserRepository;
 @RestController
 @RequestMapping("/api/profiles")
 public class ProfileController {
@@ -630,15 +754,41 @@ public class ProfileController {
     private ProfileService profileService;
 
     @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private ProfileRepository profileRepository; // Autowire ProfileRepository
 
     // Create or update a profile
     @PostMapping("/{userId}")
-    public ResponseEntity<Profile> createOrUpdateProfile(@PathVariable Long userId, @RequestBody Profile profile) {
+    public ResponseEntity<?> createOrUpdateProfile(
+            @PathVariable Long userId,
+            @RequestBody Profile profile,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+
+        // Your existing logic from both methods combined
+        if (authHeader != null) {
+            // Authorization check logic from second method
+            String token = authHeader.substring(7);
+            String email = jwtUtil.extractUsername(token);
+            User requestingUser = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new UserNotFoundException("User not found"));
+
+            if (!requestingUser.getId().equals(userId)) {
+                boolean isAdmin = requestingUser.getRoles().contains("ADMIN");
+                if (!isAdmin) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                            .body(Map.of("message", "You can only edit your own profile."));
+                }
+            }
+        }
+
         Profile savedProfile = profileService.createOrUpdateProfile(userId, profile);
         return ResponseEntity.ok(savedProfile);
     }
-
     // Get profile by user ID
     @GetMapping("/{userId}")
     public ResponseEntity<?> getProfileByUserId(@PathVariable Long userId) {
@@ -699,6 +849,8 @@ public class ProfileController {
         profileService.deleteProfile(id);
         return ResponseEntity.ok(Map.of("message", "Profile deleted successfully"));
     }
+
+
 }
 
 ===== .\controller\UserController.java =====
@@ -819,6 +971,120 @@ public class UserController {
         String token = authHeader.substring(7);
         jwtUtil.invalidateToken(token);
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+    }
+}
+
+===== .\dto\AdminLoginRequest.java =====
+
+// .\dto\AdminLoginRequest.java
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.NotBlank;
+
+public class AdminLoginRequest {
+
+    @NotBlank(message = "Username is required")
+    private String username;
+
+    @NotBlank(message = "Password is required")
+    private String password;
+
+    // Getters and Setters
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+}
+
+===== .\dto\AdminRegistrationRequest.java =====
+
+// .\dto\AdminRegistrationRequest.java
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+public class AdminRegistrationRequest {
+
+    @NotBlank(message = "Username is required")
+    private String username;
+
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    @NotBlank(message = "Password is required")
+    @Size(min = 8, message = "Password must be at least 8 characters long")
+    private String password;
+
+    // Getters and Setters
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+}
+
+===== .\dto\AdminResponse.java =====
+
+// .\dto\AdminResponse.java
+package com.divya.linkedinclone.dto;
+
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
+@Getter
+@Setter
+public class AdminResponse {
+    private Long id;
+    private String username;
+    private String email;
+    private String role;
+    private Boolean isActive;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+
+    public AdminResponse(Long id, String username, String email, String role,
+                         Boolean isActive, LocalDateTime createdAt, LocalDateTime updatedAt) {
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.role = role;
+        this.isActive = isActive;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
     }
 }
 
@@ -1140,6 +1406,53 @@ public class UserRegistrationRequest {
         this.password = password;
     }
 
+}
+
+===== .\entity\Admin.java =====
+
+// .\entity\Admin.java
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "admins")
+@EntityListeners(AuditingEntityListener.class)
+public class Admin {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true)
+    private String username;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(nullable = false)
+    private String password;
+
+    @Column(nullable = false)
+    private String role = "ADMIN";
+
+    @CreatedDate
+    private LocalDateTime createdAt;
+
+    @LastModifiedDate
+    private LocalDateTime updatedAt;
+
+    @Column(nullable = false)
+    private Boolean isActive = true;
 }
 
 ===== .\entity\Comment.java =====
@@ -1548,6 +1861,17 @@ public class User implements UserDetails {
     }
 }
 
+===== .\exception\AdminNotFoundException.java =====
+
+// .\exception\AdminNotFoundException.java
+package com.divya.linkedinclone.exception;
+
+public class AdminNotFoundException extends RuntimeException {
+    public AdminNotFoundException(String message) {
+        super(message);
+    }
+}
+
 ===== .\exception\CommentNotFoundException.java =====
 
 package com.divya.linkedinclone.exception;
@@ -1638,6 +1962,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = this.customUserDetailsService.loadUserByUsername(username);
+            logger.debug("User roles: " + userDetails.getAuthorities());
             if (jwtUtil.validateToken(jwt, userDetails)) {
                 UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
@@ -1651,6 +1976,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String requestURI = request.getRequestURI();
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
+                !requestURI.equals("/api/admin/register") &&  // Add this line
+                !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.getWriter().write("{\"message\":\"Access denied\"}");
@@ -1659,6 +1986,23 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         chain.doFilter(request, response);
     }
+}
+
+===== .\repository\AdminRepository.java =====
+
+// .\repository\AdminRepository.java
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.Admin;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface AdminRepository extends JpaRepository<Admin, Long> {
+    Optional<Admin> findByUsername(String username);
+    Optional<Admin> findByEmail(String email);
 }
 
 ===== .\repository\CommentRepository.java =====
@@ -1810,6 +2154,83 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 }
 
+
+===== .\service\AdminService.java =====
+
+// .\service\AdminService.java
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.dto.AdminRegistrationRequest;
+import com.divya.linkedinclone.entity.Admin;
+import com.divya.linkedinclone.exception.AdminNotFoundException;
+import com.divya.linkedinclone.repository.AdminRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class AdminService {
+
+    @Autowired
+    private AdminRepository adminRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    public Admin registerAdmin(AdminRegistrationRequest registrationRequest) {
+        // Check if username or email already exists
+        if (adminRepository.findByUsername(registrationRequest.getUsername()).isPresent()) {
+            throw new RuntimeException("Username already exists");
+        }
+        if (adminRepository.findByEmail(registrationRequest.getEmail()).isPresent()) {
+            throw new RuntimeException("Email already exists");
+        }
+
+        Admin admin = new Admin();
+        admin.setUsername(registrationRequest.getUsername());
+        admin.setEmail(registrationRequest.getEmail());
+        admin.setPassword(passwordEncoder.encode(registrationRequest.getPassword()));
+        admin.setRole("ADMIN");
+        admin.setIsActive(true);
+
+        return adminRepository.save(admin);
+    }
+
+    public Admin authenticateAdmin(String username, String password) {
+        Admin admin = adminRepository.findByUsername(username)
+                .orElseThrow(() -> new AdminNotFoundException("Admin not found with username: " + username));
+
+        if (!passwordEncoder.matches(password, admin.getPassword())) {
+            throw new RuntimeException("Incorrect password");
+        }
+
+        if (!admin.getIsActive()) {
+            throw new RuntimeException("Admin account is inactive");
+        }
+
+        return admin;
+    }
+
+    public List<Admin> getAllAdmins() {
+        return adminRepository.findAll();
+    }
+
+    public Admin getAdminById(Long id) {
+        return adminRepository.findById(id)
+                .orElseThrow(() -> new AdminNotFoundException("Admin not found with id: " + id));
+    }
+
+    public void deleteAdmin(Long id) {
+        if (!adminRepository.existsById(id)) {
+            throw new AdminNotFoundException("Admin not found with id: " + id);
+        }
+        adminRepository.deleteById(id);
+    }
+}
 
 ===== .\service\CommentService.java =====
 
@@ -2555,6 +2976,8 @@ import java.util.List;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 @Service
 public class UserService implements UserDetailsService {
 
@@ -2620,6 +3043,41 @@ public class UserService implements UserDetailsService {
                 user.getPassword(),
                 Collections.emptyList() // Add roles/authorities if applicable
         );
+    }
+
+    // Add these methods to UserService.java
+    public List<Map<String, Object>> getAllUsersForAdmin() {
+        List<User> users = userRepository.findAll();
+        return users.stream()
+                .map(user -> {
+                    Map<String, Object> userMap = new HashMap<>();
+                    userMap.put("userId", user.getId());
+                    userMap.put("name", user.getName());
+                    userMap.put("email", user.getEmail());
+                    userMap.put("role", user.getRoles().stream().findFirst().orElse("USER"));
+                    return userMap;
+                })
+                .collect(Collectors.toList());
+    }
+
+    public Map<String, Object> getUserByIdForAdmin(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
+
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("userId", user.getId());
+        userMap.put("name", user.getName());
+        userMap.put("email", user.getEmail());
+        userMap.put("role", user.getRoles().stream().findFirst().orElse("USER"));
+        return userMap;
+    }
+
+
+    public void deleteUserByAdmin(Long userId) {
+        if (!userRepository.existsById(userId)) {
+            throw new UserNotFoundException("User not found with id: " + userId);
+        }
+        userRepository.deleteById(userId);
     }
 }
 
@@ -2696,6 +3154,28 @@ public class JwtUtil {
         invalidatedTokens.put(token, extractExpiration(token));
     }
 }
+
+application.properties:
+spring.application.name=linkedin
+spring.datasource.url=jdbc:mysql://localhost:3306/linkedin_clone
+spring.datasource.username=root
+spring.datasource.password=Dsql+27
+spring.jpa.hibernate.ddl-auto=update
+logging.level.org.springframework.security=DEBUG
+upload.directory=uploads
+# Enable multipart file uploads
+spring.servlet.multipart.enabled=true
+# Maximum file size (default is 1MB)
+spring.servlet.multipart.max-file-size=10MB
+# Maximum request size (default is 10MB)
+spring.servlet.multipart.max-request-size=10MB
+# Location to store uploaded files temporarily
+spring.servlet.multipart.location=/tmp
+# Admin settings
+admin.default.role=ADMIN
+admin.initial.username=admin
+admin.initial.email=admin@example.com
+admin.initial.password=admin123
 
 pom.xml:
 <?xml version="1.0" encoding="UTF-8"?>
@@ -2816,20 +3296,3 @@ pom.xml:
         </plugins>
     </build>
 </project>
-
-application.properties:
-spring.application.name=linkedin
-spring.datasource.url=jdbc:mysql://localhost:3306/linkedin_clone
-spring.datasource.username=root
-spring.datasource.password=Dsql+27
-spring.jpa.hibernate.ddl-auto=update
-logging.level.org.springframework.security=DEBUG
-upload.directory=uploads
-# Enable multipart file uploads
-spring.servlet.multipart.enabled=true
-# Maximum file size (default is 1MB)
-spring.servlet.multipart.max-file-size=10MB
-# Maximum request size (default is 10MB)
-spring.servlet.multipart.max-request-size=10MB
-# Location to store uploaded files temporarily
-spring.servlet.multipart.location=/tmp

@@ -46,6 +46,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = this.customUserDetailsService.loadUserByUsername(username);
+            logger.debug("User roles: " + userDetails.getAuthorities());
             if (jwtUtil.validateToken(jwt, userDetails)) {
                 UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
@@ -59,6 +60,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String requestURI = request.getRequestURI();
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
+                !requestURI.equals("/api/admin/register") &&  // Add this line
+                !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.getWriter().write("{\"message\":\"Access denied\"}");

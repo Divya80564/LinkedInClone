@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Map;
+import java.util.HashMap;
+import java.util.stream.Collectors;
 @Service
 public class UserService implements UserDetailsService {
 
@@ -82,5 +84,40 @@ public class UserService implements UserDetailsService {
                 user.getPassword(),
                 Collections.emptyList() // Add roles/authorities if applicable
         );
+    }
+
+    // Add these methods to UserService.java
+    public List<Map<String, Object>> getAllUsersForAdmin() {
+        List<User> users = userRepository.findAll();
+        return users.stream()
+                .map(user -> {
+                    Map<String, Object> userMap = new HashMap<>();
+                    userMap.put("userId", user.getId());
+                    userMap.put("name", user.getName());
+                    userMap.put("email", user.getEmail());
+                    userMap.put("role", user.getRoles().stream().findFirst().orElse("USER"));
+                    return userMap;
+                })
+                .collect(Collectors.toList());
+    }
+
+    public Map<String, Object> getUserByIdForAdmin(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
+
+        Map<String, Object> userMap = new HashMap<>();
+        userMap.put("userId", user.getId());
+        userMap.put("name", user.getName());
+        userMap.put("email", user.getEmail());
+        userMap.put("role", user.getRoles().stream().findFirst().orElse("USER"));
+        return userMap;
+    }
+
+
+    public void deleteUserByAdmin(Long userId) {
+        if (!userRepository.existsById(userId)) {
+            throw new UserNotFoundException("User not found with id: " + userId);
+        }
+        userRepository.deleteById(userId);
     }
 }

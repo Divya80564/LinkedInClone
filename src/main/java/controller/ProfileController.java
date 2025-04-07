@@ -6,12 +6,15 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.ProfileRepository;
 import com.divya.linkedinclone.service.ProfileService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import com.divya.linkedinclone.util.JwtUtil;
 import org.springframework.web.bind.annotation.*;
-
+import com.divya.linkedinclone.repository.UserRepository;
 @RestController
 @RequestMapping("/api/profiles")
 public class ProfileController {
@@ -20,15 +23,41 @@ public class ProfileController {
     private ProfileService profileService;
 
     @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
     private ProfileRepository profileRepository; // Autowire ProfileRepository
 
     // Create or update a profile
     @PostMapping("/{userId}")
-    public ResponseEntity<Profile> createOrUpdateProfile(@PathVariable Long userId, @RequestBody Profile profile) {
+    public ResponseEntity<?> createOrUpdateProfile(
+            @PathVariable Long userId,
+            @RequestBody Profile profile,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+
+        // Your existing logic from both methods combined
+        if (authHeader != null) {
+            // Authorization check logic from second method
+            String token = authHeader.substring(7);
+            String email = jwtUtil.extractUsername(token);
+            User requestingUser = userRepository.findByEmail(email)
+                    .orElseThrow(() -> new UserNotFoundException("User not found"));
+
+            if (!requestingUser.getId().equals(userId)) {
+                boolean isAdmin = requestingUser.getRoles().contains("ADMIN");
+                if (!isAdmin) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                            .body(Map.of("message", "You can only edit your own profile."));
+                }
+            }
+        }
+
         Profile savedProfile = profileService.createOrUpdateProfile(userId, profile);
         return ResponseEntity.ok(savedProfile);
     }
-
     // Get profile by user ID
     @GetMapping("/{userId}")
     public ResponseEntity<?> getProfileByUserId(@PathVariable Long userId) {
@@ -89,4 +118,6 @@ public class ProfileController {
         profileService.deleteProfile(id);
         return ResponseEntity.ok(Map.of("message", "Profile deleted successfully"));
     }
+
+
 }
