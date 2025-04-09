@@ -60,6 +60,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String requestURI = request.getRequestURI();
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
+                !requestURI.equals("/api/users/verify") &&  // Add this line
                 !requestURI.equals("/api/admin/register") &&  // Add this line
                 !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {

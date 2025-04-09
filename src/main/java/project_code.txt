@@ -114,7 +114,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/uploads/**").permitAll()
-                        .requestMatchers("/api/users/register", "/api/users/login").permitAll()
+                        .requestMatchers("/api/users/register", "/api/users/login","/api/users/verify").permitAll()
                         .requestMatchers("/api/admin/register").permitAll() // Add this line
                         .requestMatchers("/api/admin/login").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -197,11 +197,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.authentication.BadCredentialsException;
 import java.util.Map;
+import org.springframework.security.core.userdetails.UserDetails;
 
 
 @RestController
@@ -216,6 +218,10 @@ public class AdminController {
 
     @Autowired
     private JwtUtil jwtUtil;
+
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
 
     @PostMapping("/register")
     public ResponseEntity<?> registerAdmin(@RequestBody AdminRegistrationRequest registrationRequest) {
@@ -239,29 +245,26 @@ public class AdminController {
     @PostMapping("/login")
     public ResponseEntity<?> loginAdmin(@RequestBody AdminLoginRequest loginRequest) {
         try {
-            Admin admin = adminService.authenticateAdmin(loginRequest.getUsername(), loginRequest.getPassword());
+            // Use the admin-specific authentication
+            Authentication authentication = authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(
+                            loginRequest.getUsername(),
+                            loginRequest.getPassword()
+                    )
+            );
 
-            // Add roles claim to the token
-            Map<String, Object> claims = new HashMap<>();
-            claims.put("roles", Collections.singletonList(admin.getRole()));
-
-            // Generate JWT token with authorities - FIXED SYNTAX
-            final String jwt = jwtUtil.generateToken(
-                    new org.springframework.security.core.userdetails.User(
-                            admin.getUsername(),
-                            admin.getPassword(),
-                            Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + admin.getRole())))
-            ); // This closing parenthesis was missing
+            // Generate token
+            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+            final String jwt = jwtUtil.generateToken(userDetails);
 
             Map<String, Object> response = new HashMap<>();
             response.put("token", jwt);
-            response.put("role", admin.getRole());
+            response.put("role", "ADMIN");
             return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", e.getMessage()));
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid username or password");
         }
     }
-
     @GetMapping("/users")
     public ResponseEntity<?> getAllUsers() {
         try {
@@ -906,34 +909,56 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/verify")
+    public ResponseEntity<?> verifyUser(@RequestParam String token) {
+        try {
+            userService.verifyUser(token);
+            return ResponseEntity.ok(Map.of("message", "Email verified successfully"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     // Login a user and return a JWT token
     // In UserController.java
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody LoginRequest loginRequest) {
         try {
+            // First check if user exists and is verified
+            User user = userRepository.findByEmail(loginRequest.getEmail())
+                    .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + loginRequest.getEmail()));
+
+            if (!user.isEnabled()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(Map.of("error", "Account not verified. Please check your email for verification link."));
+            }
+
             // Authenticate the user
             UsernamePasswordAuthenticationToken authToken =
                     new UsernamePasswordAuthenticationToken(loginRequest.getEmail(), loginRequest.getPassword());
             authenticationManager.authenticate(authToken);
+
+            // Load user details and generate a JWT token
+            final UserDetails userDetails = userService.loadUserByUsername(loginRequest.getEmail());
+            final String jwt = jwtUtil.generateToken(userDetails);
+
+            // Return the response
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Login successful!");
+            response.put("userId", user.getId());
+            response.put("token", jwt);
+            return ResponseEntity.ok(response);
+
         } catch (BadCredentialsException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid email or password");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", "Invalid email or password"));
+        } catch (UsernameNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(Map.of("error", e.getMessage()));
         }
-
-        // Load user details and generate a JWT token
-        final UserDetails userDetails = userService.loadUserByUsername(loginRequest.getEmail());
-        final String jwt = jwtUtil.generateToken(userDetails);
-
-        // Fetch the user ID
-        User user = userRepository.findByEmail(loginRequest.getEmail())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + loginRequest.getEmail()));
-
-        // Return the response
-        Map<String, Object> response = new HashMap<>();
-        response.put("message", "Login successful!");
-        response.put("userId", user.getId());
-        response.put("token", jwt);
-        return ResponseEntity.ok(response);
     }
+
+
     //get all user
     @GetMapping
     public ResponseEntity<List<User>> getAllUsers() {
@@ -1762,6 +1787,9 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
+// Add these imports at the top of User.java
+import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.Post;
 import lombok.Setter;
 import lombok.ToString;
 import org.springframework.security.core.GrantedAuthority;
@@ -1795,6 +1823,15 @@ public class User implements UserDetails {
     @NotBlank(message = "Password is required")
     @Size(min = 8, message = "Password must be at least 8 characters long")
     private String password;
+
+    @Column(nullable = false)
+    private boolean enabled = false; // Changed from true to false
+
+
+    @Override
+    public boolean isEnabled() {
+        return this.enabled;
+    }
 
     // One-to-one relationship with Profile
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
@@ -1831,11 +1868,6 @@ public class User implements UserDetails {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
-
-    @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
@@ -1858,6 +1890,51 @@ public class User implements UserDetails {
         return roles.stream()
                 .map(SimpleGrantedAuthority::new)
                 .collect(Collectors.toList());
+    }
+}
+
+===== .\entity\VerificationToken.java =====
+
+// .\entity\VerificationToken.java
+package com.divya.linkedinclone.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.LocalDateTime;
+
+@Entity
+@Getter
+@Setter
+@Table(name = "verification_tokens")
+public class VerificationToken {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String token;
+
+    @OneToOne(targetEntity = User.class, fetch = FetchType.EAGER)
+    @JoinColumn(nullable = false, name = "user_id")
+    private User user;
+
+    private LocalDateTime expiryDate;
+
+    public VerificationToken() {}
+
+    public VerificationToken(String token, User user) {
+        this.token = token;
+        this.user = user;
+        this.expiryDate = calculateExpiryDate(24); // 24 hours expiry
+    }
+
+    private LocalDateTime calculateExpiryDate(int expiryTimeInHours) {
+        return LocalDateTime.now().plusHours(expiryTimeInHours);
+    }
+
+    public boolean isExpired() {
+        return LocalDateTime.now().isAfter(expiryDate);
     }
 }
 
@@ -1976,6 +2053,7 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         String requestURI = request.getRequestURI();
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
+                !requestURI.equals("/api/users/verify") &&  // Add this line
                 !requestURI.equals("/api/admin/register") &&  // Add this line
                 !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {
@@ -2154,6 +2232,58 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 }
 
+
+===== .\repository\VerificationTokenRepository.java =====
+
+// .\repository\VerificationTokenRepository.java
+package com.divya.linkedinclone.repository;
+
+import com.divya.linkedinclone.entity.VerificationToken;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface VerificationTokenRepository extends JpaRepository<VerificationToken, Long> {
+    Optional<VerificationToken> findByToken(String token);
+    Optional<VerificationToken> findByUserId(Long userId);
+}
+
+===== .\service\AdminDetailsService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.dto.AdminRegistrationRequest;
+import com.divya.linkedinclone.entity.Admin;
+import com.divya.linkedinclone.exception.AdminNotFoundException;
+import com.divya.linkedinclone.repository.AdminRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.stereotype.Service;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import java.util.Collections;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+
+@Service
+public class AdminDetailsService implements UserDetailsService {
+
+    @Autowired
+    private AdminRepository adminRepository;
+
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        Admin admin = adminRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("Admin not found with username: " + username));
+
+        return new org.springframework.security.core.userdetails.User(
+                admin.getUsername(),
+                admin.getPassword(),
+                Collections.singletonList(new SimpleGrantedAuthority("ROLE_ADMIN")));
+    }
+}
 
 ===== .\service\AdminService.java =====
 
@@ -2465,6 +2595,15 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import java.util.List;
+import java.util.Optional;
+import com.divya.linkedinclone.entity.Admin;
+import java.util.Collections;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import java.util.stream.Collectors;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import com.divya.linkedinclone.repository.AdminRepository;
 
 import java.util.Collections;
 
@@ -2474,15 +2613,70 @@ public class CustomUserDetailsService implements UserDetailsService {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private AdminRepository adminRepository;  // Add this if you have separate admin auth
+
     @Override
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        // First try to find as admin
+        Optional<Admin> adminOptional = adminRepository.findByUsername(username);
+        if (adminOptional.isPresent()) {
+            Admin admin = adminOptional.get();
+            return new org.springframework.security.core.userdetails.User(
+                    admin.getUsername(),
+                    admin.getPassword(),
+                    Collections.singletonList(new SimpleGrantedAuthority("ROLE_ADMIN")));
+        }
+
+        // If not admin, try as regular user
+        User user = userRepository.findByEmail(username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with username/email: " + username));
+
+        List<GrantedAuthority> authorities = user.getRoles().stream()
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                .collect(Collectors.toList());
+
         return new org.springframework.security.core.userdetails.User(
-                user.getEmail(), user.getPassword(), Collections.emptyList());
+                user.getEmail(),
+                user.getPassword(),
+                authorities);
     }
 }
 
+===== .\service\EmailService.java =====
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.User;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.stereotype.Service;
+
+@Service
+public class EmailService {
+    private final JavaMailSender mailSender;
+
+    public EmailService(JavaMailSender mailSender) {
+        this.mailSender = mailSender;
+    }
+
+    public void sendVerificationEmail(User user, String token) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setTo(user.getEmail());
+        message.setSubject("Verify Your Account");
+        message.setText("Please click the link below to verify your account:\n\n"
+                + "http://localhost:8080/api/users/verify?token=" + token
+                + "\n\nThis link will expire in 24 hours.");
+
+        try {
+            mailSender.send(message);
+            System.out.println("Verification email sent to: " + user.getEmail());
+        } catch (Exception e) {
+            System.err.println("Failed to send email: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+}
 
 ===== .\service\FollowService.java =====
 
@@ -2973,6 +3167,11 @@ import org.springframework.util.StringUtils;
 import com.divya.linkedinclone.exception.UserNotFoundException;
 import java.util.Set;
 import java.util.List;
+import com.divya.linkedinclone.entity.VerificationToken;
+import com.divya.linkedinclone.service.VerificationTokenService;
+import com.divya.linkedinclone.service.EmailService;
+import com.divya.linkedinclone.service.ProfileService;
+
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Map;
@@ -2988,37 +3187,69 @@ public class UserService implements UserDetailsService {
     private PasswordEncoder passwordEncoder;
 
     @Autowired
+    private VerificationTokenService verificationTokenService;
+
+    @Autowired
+    private EmailService emailService; // We'll create this next
+
+    @Autowired
     private ProfileService profileService; // Inject ProfileService
 
     // Register a new user
     public User registerUser(UserRegistrationRequest registrationRequest) {
-        // Check if the email already exists
         if (userRepository.findByEmail(registrationRequest.getEmail()).isPresent()) {
             throw new UserNotFoundException("Email already exists");
         }
 
-        // Create and save the User
         User user = new User();
         user.setName(registrationRequest.getName());
         user.setEmail(registrationRequest.getEmail());
         user.setPassword(passwordEncoder.encode(registrationRequest.getPassword()));
-        user.setRoles(Set.of("USER")); // Assign default role
+        user.setRoles(Set.of("USER"));
+        user.setEnabled(false); // User is not enabled until email is verified
 
         User savedUser = userRepository.save(user);
 
-        // Create and save the Profile with default values
+        // Create verification token
+        VerificationToken verificationToken = verificationTokenService.createVerificationToken(savedUser);
+
+        // Send verification email
+        emailService.sendVerificationEmail(savedUser, verificationToken.getToken());
+
+        // Create profile (existing code)
         Profile profile = new Profile();
-        profile.setBio(""); // Default empty bio
-        profile.setProfilePicture(""); // Default empty profile picture
-        profile.setSkills(""); // Default empty skills
-        profile.setExperience(""); // Default empty experience
-        profile.setEducation(""); // Default empty education
-        profile.setLocation(""); // Default empty location
-        profile.setWebsite(""); // Default empty website
-        profile.setUser(savedUser); // Associate the profile with the user
-        profileService.createOrUpdateProfile(savedUser.getId(), profile); // Save the profile
+        profile.setBio("");
+        profile.setProfilePicture("");
+        profile.setSkills("");
+        profile.setExperience("");
+        profile.setEducation("");
+        profile.setLocation("");
+        profile.setWebsite("");
+        profile.setUser(savedUser);
+        profileService.createOrUpdateProfile(savedUser.getId(), profile);
 
         return savedUser;
+    }
+
+    public void verifyUser(String token) {
+        VerificationToken verificationToken = verificationTokenService.getVerificationToken(token);
+        if (verificationToken == null) {
+            throw new RuntimeException("Invalid verification token");
+        }
+
+        if (verificationToken.isExpired()) {
+            verificationTokenService.deleteToken(verificationToken);
+            throw new RuntimeException("Token has expired");
+        }
+
+        User user = verificationToken.getUser();
+        if (user.isEnabled()) {
+            throw new RuntimeException("Account already verified");
+        }
+
+        user.setEnabled(true);
+        userRepository.save(user);
+        verificationTokenService.deleteToken(verificationToken);
     }
 
     // Find a user by email
@@ -3081,6 +3312,40 @@ public class UserService implements UserDetailsService {
     }
 }
 
+===== .\service\VerificationTokenService.java =====
+
+
+package com.divya.linkedinclone.service;
+
+import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.entity.VerificationToken;
+import com.divya.linkedinclone.repository.VerificationTokenRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDateTime;
+import java.util.UUID;
+
+@Service
+public class VerificationTokenService {
+    @Autowired
+    private VerificationTokenRepository tokenRepository;
+
+    public VerificationToken createVerificationToken(User user) {
+        String token = UUID.randomUUID().toString();
+        VerificationToken verificationToken = new VerificationToken(token, user);
+        return tokenRepository.save(verificationToken);
+    }
+
+    public VerificationToken getVerificationToken(String token) {
+        return tokenRepository.findByToken(token).orElse(null);
+    }
+
+    public void deleteToken(VerificationToken token) {
+        tokenRepository.delete(token);
+    }
+}
+
 ===== .\util\JwtUtil.java =====
 
 package com.divya.linkedinclone.util;
@@ -3132,7 +3397,13 @@ public class JwtUtil {
 
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
-        return createToken(claims, userDetails.getUsername());
+        return Jwts.builder()
+                .setClaims(claims) // Use the provided claims
+                .setSubject(userDetails.getUsername())
+                .setIssuedAt(new Date(System.currentTimeMillis()))
+                .setExpiration(new Date(System.currentTimeMillis() + EXPIRATION_TIME))
+                .signWith(Keys.hmacShaKeyFor(SECRET_KEY.getBytes()), SignatureAlgorithm.HS256)
+                .compact();
     }
 
     private String createToken(Map<String, Object> claims, String subject) {
@@ -3176,6 +3447,15 @@ admin.default.role=ADMIN
 admin.initial.username=admin
 admin.initial.email=admin@example.com
 admin.initial.password=admin123
+# Add to application.properties
+# Email Configuration (for production)
+spring.mail.host=smtp.gmail.com
+spring.mail.port=587
+spring.mail.username=divi80564@gmail.com
+spring.mail.password=rraefunnjunbsbeu
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true
+spring.mail.properties.mail.smtp.starttls.required=true
 
 pom.xml:
 <?xml version="1.0" encoding="UTF-8"?>
@@ -3258,6 +3538,12 @@ pom.xml:
             <artifactId>jjwt-jackson</artifactId>
             <version>0.11.5</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Add to pom.xml -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
 

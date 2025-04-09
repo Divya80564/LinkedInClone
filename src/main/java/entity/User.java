@@ -5,6 +5,9 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
+// Add these imports at the top of User.java
+import com.divya.linkedinclone.entity.Profile;
+import com.divya.linkedinclone.entity.Post;
 import lombok.Setter;
 import lombok.ToString;
 import org.springframework.security.core.GrantedAuthority;
@@ -39,6 +42,15 @@ public class User implements UserDetails {
     @Size(min = 8, message = "Password must be at least 8 characters long")
     private String password;
 
+    @Column(nullable = false)
+    private boolean enabled = false; // Changed from true to false
+
+
+    @Override
+    public boolean isEnabled() {
+        return this.enabled;
+    }
+
     // One-to-one relationship with Profile
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonIgnore
@@ -70,11 +82,6 @@ public class User implements UserDetails {
 
     @Override
     public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
         return true;
     }
 
