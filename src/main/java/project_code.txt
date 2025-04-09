@@ -73,6 +73,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleCommentNotFoundException(CommentNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
     }
+
 }
 
 ===== .\config\SecurityConfig.java =====
@@ -114,7 +115,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/uploads/**").permitAll()
-                        .requestMatchers("/api/users/register", "/api/users/login","/api/users/verify").permitAll()
+                        .requestMatchers("/api/users/register", "/api/users/login","/api/users/verify", "/api/users/forgot-password", "/api/users/reset-password/**").permitAll()
                         .requestMatchers("/api/admin/register").permitAll() // Add this line
                         .requestMatchers("/api/admin/login").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
@@ -867,6 +868,10 @@ import com.divya.linkedinclone.dto.LoginRequest;
 import com.divya.linkedinclone.dto.UserRegistrationRequest;
 import com.divya.linkedinclone.repository.UserRepository;
 import java.util.List;
+import com.divya.linkedinclone.dto.ForgotPasswordRequest;
+import com.divya.linkedinclone.dto.ResetPasswordRequest;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+
 import com.divya.linkedinclone.entity.User;
 import com.divya.linkedinclone.service.UserService;
 import com.divya.linkedinclone.util.JwtUtil;
@@ -996,6 +1001,34 @@ public class UserController {
         String token = authHeader.substring(7);
         jwtUtil.invalidateToken(token);
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+    }
+
+    // .\controller\UserController.java (add these methods)
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            userService.initiatePasswordReset(request.getEmail());
+            return ResponseEntity.ok(Map.of("message", "Password reset link has been sent to your email"));
+        } catch (UserNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to send password reset email"));
+        }
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(
+            @RequestParam("token") String token,
+            @Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            userService.resetPassword(token, request.getNewPassword());
+            return ResponseEntity.ok(Map.of("message", "Password reset successfully"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        }
     }
 }
 
@@ -1183,6 +1216,29 @@ public class CreatePostRequest {
 
     public void setUserId(Long userId) {
         this.userId = userId;
+    }
+}
+
+===== .\dto\ForgotPasswordRequest.java =====
+
+// .\dto\ForgotPasswordRequest.java
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+
+public class ForgotPasswordRequest {
+    @NotBlank(message = "Email is required")
+    @Email(message = "Invalid email format")
+    private String email;
+
+    // Getters and Setters
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
     }
 }
 
@@ -1381,6 +1437,29 @@ public class PostResponse {
         this.updatedAt = post.getUpdatedAt();
         this.imagePath = post.getImagePath();
         this.user = new UserResponse(post.getUser()); // Include user details
+    }
+}
+
+===== .\dto\ResetPasswordRequest.java =====
+
+// .\dto\ResetPasswordRequest.java
+package com.divya.linkedinclone.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+public class ResetPasswordRequest {
+    @NotBlank(message = "Password is required")
+    @Size(min = 8, message = "Password must be at least 8 characters long")
+    private String newPassword;
+
+    // Getters and Setters
+    public String getNewPassword() {
+        return newPassword;
+    }
+
+    public void setNewPassword(String newPassword) {
+        this.newPassword = newPassword;
     }
 }
 
@@ -1921,12 +2000,28 @@ public class VerificationToken {
 
     private LocalDateTime expiryDate;
 
+    @Enumerated(EnumType.STRING)
+    private TokenType tokenType;
+
+    public enum TokenType {
+        VERIFICATION,
+        PASSWORD_RESET
+    }
+
     public VerificationToken() {}
 
-    public VerificationToken(String token, User user) {
+    public VerificationToken(String token, User user, TokenType tokenType) {
         this.token = token;
         this.user = user;
-        this.expiryDate = calculateExpiryDate(24); // 24 hours expiry
+        this.tokenType = tokenType;
+        this.expiryDate = calculateExpiryDate(24); // 24 hours expiry for verification
+    }
+
+    public VerificationToken(String token, User user, TokenType tokenType, int expiryTimeInHours) {
+        this.token = token;
+        this.user = user;
+        this.tokenType = tokenType;
+        this.expiryDate = calculateExpiryDate(expiryTimeInHours);
     }
 
     private LocalDateTime calculateExpiryDate(int expiryTimeInHours) {
@@ -1936,6 +2031,7 @@ public class VerificationToken {
     public boolean isExpired() {
         return LocalDateTime.now().isAfter(expiryDate);
     }
+
 }
 
 ===== .\exception\AdminNotFoundException.java =====
@@ -2054,6 +2150,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
                 !requestURI.equals("/api/users/verify") &&  // Add this line
+                !requestURI.equals("/api/users/forgot-pssword") &&
+                !requestURI.equals("/api/users/reset-password") &&
+
                 !requestURI.equals("/api/admin/register") &&  // Add this line
                 !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {
@@ -2248,6 +2347,7 @@ import java.util.Optional;
 public interface VerificationTokenRepository extends JpaRepository<VerificationToken, Long> {
     Optional<VerificationToken> findByToken(String token);
     Optional<VerificationToken> findByUserId(Long userId);
+    Optional<VerificationToken> findByTokenAndTokenType(String token, VerificationToken.TokenType tokenType);
 }
 
 ===== .\service\AdminDetailsService.java =====
@@ -2672,8 +2772,27 @@ public class EmailService {
             mailSender.send(message);
             System.out.println("Verification email sent to: " + user.getEmail());
         } catch (Exception e) {
-            System.err.println("Failed to send email: " + e.getMessage());
+            System.err.println("Failed to send verification email: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    public void sendPasswordResetEmail(User user, String token) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setTo(user.getEmail());
+        message.setSubject("Password Reset Request");
+        message.setText("To reset your password, click the link below:\n\n"
+                + "http://localhost:8080/api/users/reset-password?token=" + token
+                + "\n\nThis link will expire in 1 hour.\n\n"
+                + "If you didn't request this, please ignore this email.");
+
+        try {
+            mailSender.send(message);
+            System.out.println("Password reset email sent to: " + user.getEmail());
+        } catch (Exception e) {
+            System.err.println("Failed to send password reset email: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Failed to send password reset email");
         }
     }
 }
@@ -3310,11 +3429,42 @@ public class UserService implements UserDetailsService {
         }
         userRepository.deleteById(userId);
     }
+
+    // .\service\UserService.java (add these methods)
+    public void initiatePasswordReset(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UserNotFoundException("User not found with email: " + email));
+
+        // Create and save password reset token
+        VerificationToken passwordResetToken = verificationTokenService.createPasswordResetToken(user);
+
+        // Send email with reset link
+        emailService.sendPasswordResetEmail(user, passwordResetToken.getToken());
+    }
+
+    public void resetPassword(String token, String newPassword) {
+        VerificationToken passwordResetToken = verificationTokenService.getPasswordResetToken(token);
+        if (passwordResetToken == null) {
+            throw new RuntimeException("Invalid password reset token");
+        }
+
+        if (passwordResetToken.isExpired()) {
+            verificationTokenService.deleteToken(passwordResetToken);
+            throw new RuntimeException("Password reset token has expired");
+        }
+
+        User user = passwordResetToken.getUser();
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        // Delete the token after use
+        verificationTokenService.deleteToken(passwordResetToken);
+    }
 }
 
 ===== .\service\VerificationTokenService.java =====
 
-
+// .\service\VerificationTokenService.java
 package com.divya.linkedinclone.service;
 
 import com.divya.linkedinclone.entity.User;
@@ -3333,12 +3483,25 @@ public class VerificationTokenService {
 
     public VerificationToken createVerificationToken(User user) {
         String token = UUID.randomUUID().toString();
-        VerificationToken verificationToken = new VerificationToken(token, user);
+        VerificationToken verificationToken = new VerificationToken(token, user, VerificationToken.TokenType.VERIFICATION);
         return tokenRepository.save(verificationToken);
+    }
+
+    public VerificationToken createPasswordResetToken(User user) {
+        // Password reset tokens expire in 1 hour
+        String token = UUID.randomUUID().toString();
+        VerificationToken passwordResetToken = new VerificationToken(token, user,
+                VerificationToken.TokenType.PASSWORD_RESET, 1);
+        return tokenRepository.save(passwordResetToken);
     }
 
     public VerificationToken getVerificationToken(String token) {
         return tokenRepository.findByToken(token).orElse(null);
+    }
+
+    public VerificationToken getPasswordResetToken(String token) {
+        return tokenRepository.findByTokenAndTokenType(token, VerificationToken.TokenType.PASSWORD_RESET)
+                .orElse(null);
     }
 
     public void deleteToken(VerificationToken token) {

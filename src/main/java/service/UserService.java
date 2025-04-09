@@ -157,4 +157,35 @@ public class UserService implements UserDetailsService {
         }
         userRepository.deleteById(userId);
     }
+
+    // .\service\UserService.java (add these methods)
+    public void initiatePasswordReset(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UserNotFoundException("User not found with email: " + email));
+
+        // Create and save password reset token
+        VerificationToken passwordResetToken = verificationTokenService.createPasswordResetToken(user);
+
+        // Send email with reset link
+        emailService.sendPasswordResetEmail(user, passwordResetToken.getToken());
+    }
+
+    public void resetPassword(String token, String newPassword) {
+        VerificationToken passwordResetToken = verificationTokenService.getPasswordResetToken(token);
+        if (passwordResetToken == null) {
+            throw new RuntimeException("Invalid password reset token");
+        }
+
+        if (passwordResetToken.isExpired()) {
+            verificationTokenService.deleteToken(passwordResetToken);
+            throw new RuntimeException("Password reset token has expired");
+        }
+
+        User user = passwordResetToken.getUser();
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        // Delete the token after use
+        verificationTokenService.deleteToken(passwordResetToken);
+    }
 }

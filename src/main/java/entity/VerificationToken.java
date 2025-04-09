@@ -24,12 +24,28 @@ public class VerificationToken {
 
     private LocalDateTime expiryDate;
 
+    @Enumerated(EnumType.STRING)
+    private TokenType tokenType;
+
+    public enum TokenType {
+        VERIFICATION,
+        PASSWORD_RESET
+    }
+
     public VerificationToken() {}
 
-    public VerificationToken(String token, User user) {
+    public VerificationToken(String token, User user, TokenType tokenType) {
         this.token = token;
         this.user = user;
-        this.expiryDate = calculateExpiryDate(24); // 24 hours expiry
+        this.tokenType = tokenType;
+        this.expiryDate = calculateExpiryDate(24); // 24 hours expiry for verification
+    }
+
+    public VerificationToken(String token, User user, TokenType tokenType, int expiryTimeInHours) {
+        this.token = token;
+        this.user = user;
+        this.tokenType = tokenType;
+        this.expiryDate = calculateExpiryDate(expiryTimeInHours);
     }
 
     private LocalDateTime calculateExpiryDate(int expiryTimeInHours) {
@@ -39,4 +55,5 @@ public class VerificationToken {
     public boolean isExpired() {
         return LocalDateTime.now().isAfter(expiryDate);
     }
+
 }

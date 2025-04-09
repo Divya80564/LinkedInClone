@@ -61,6 +61,9 @@ public class JwtRequestFilter extends OncePerRequestFilter {
         if (!requestURI.equals("/api/users/register") &&
                 !requestURI.equals("/api/users/login") &&
                 !requestURI.equals("/api/users/verify") &&  // Add this line
+                !requestURI.equals("/api/users/forgot-password") &&
+                !requestURI.equals("/api/users/reset-password") &&
+
                 !requestURI.equals("/api/admin/register") &&  // Add this line
                 !requestURI.equals("/api/admin/login") &&
                 authorizationHeader == null) {

@@ -7,6 +7,10 @@ import com.divya.linkedinclone.dto.LoginRequest;
 import com.divya.linkedinclone.dto.UserRegistrationRequest;
 import com.divya.linkedinclone.repository.UserRepository;
 import java.util.List;
+import com.divya.linkedinclone.dto.ForgotPasswordRequest;
+import com.divya.linkedinclone.dto.ResetPasswordRequest;
+import com.divya.linkedinclone.exception.UserNotFoundException;
+
 import com.divya.linkedinclone.entity.User;
 import com.divya.linkedinclone.service.UserService;
 import com.divya.linkedinclone.util.JwtUtil;
@@ -136,5 +140,33 @@ public class UserController {
         String token = authHeader.substring(7);
         jwtUtil.invalidateToken(token);
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+    }
+
+    // .\controller\UserController.java (add these methods)
+    @PostMapping("/forgot-password")
+    public ResponseEntity<?> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            userService.initiatePasswordReset(request.getEmail());
+            return ResponseEntity.ok(Map.of("message", "Password reset link has been sent to your email"));
+        } catch (UserNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to send password reset email"));
+        }
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(
+            @RequestParam("token") String token,
+            @Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            userService.resetPassword(token, request.getNewPassword());
+            return ResponseEntity.ok(Map.of("message", "Password reset successfully"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        }
     }
 }
