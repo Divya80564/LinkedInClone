@@ -18,12 +18,28 @@ import com.divya.linkedinclone.entity.VerificationToken;
 import com.divya.linkedinclone.service.VerificationTokenService;
 import com.divya.linkedinclone.service.EmailService;
 import com.divya.linkedinclone.service.ProfileService;
-
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
+import java.nio.file.*;
+import java.nio.file.StandardCopyOption;
+import java.util.UUID;
+import com.divya.linkedinclone.entity.User;
+
+
+
 @Service
 public class UserService implements UserDetailsService {
 
@@ -41,6 +57,9 @@ public class UserService implements UserDetailsService {
 
     @Autowired
     private ProfileService profileService; // Inject ProfileService
+
+    @Value("${resume.upload.directory}")
+    private String resumeUploadDirectory;
 
     // Register a new user
     public User registerUser(UserRegistrationRequest registrationRequest) {
@@ -187,5 +206,86 @@ public class UserService implements UserDetailsService {
 
         // Delete the token after use
         verificationTokenService.deleteToken(passwordResetToken);
+    }
+
+    public User uploadResume(Long userId, MultipartFile file) throws IOException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        // Validate file type
+        String contentType = file.getContentType();
+        if (!"application/pdf".equals(contentType) &&
+                !"application/vnd.openxmlformats-officedocument.wordprocessingml.document".equals(contentType)) {
+            throw new RuntimeException("Only PDF and DOCX files are allowed");
+        }
+
+        // Create directory if it doesn't exist
+        Path uploadPath = Paths.get(resumeUploadDirectory);
+        if (!Files.exists(uploadPath)) {
+            Files.createDirectories(uploadPath);
+        }
+
+        // Generate unique filename
+        String originalFilename = StringUtils.cleanPath(file.getOriginalFilename());
+        String fileExtension = originalFilename.substring(originalFilename.lastIndexOf("."));
+        String fileName = UUID.randomUUID().toString() + fileExtension;
+
+        // Save file
+        Path filePath = uploadPath.resolve(fileName);
+        Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
+
+        // Delete old resume if exists
+        if (user.getResumePath() != null) {
+            try {
+                Files.deleteIfExists(Paths.get(user.getResumePath()));
+            } catch (IOException e) {
+                System.err.println("Failed to delete old resume: " + e.getMessage());
+            }
+        }
+
+        // Update user with new resume info
+        user.setResumePath(filePath.toString());
+        user.setResumeName(originalFilename);
+        return userRepository.save(user);
+    }
+
+    public Resource loadResumeAsResource(Long userId) throws IOException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        if (user.getResumePath() == null) {
+            throw new RuntimeException("Resume not found for user");
+        }
+
+        Path filePath = Paths.get(user.getResumePath());
+        Resource resource = new UrlResource(filePath.toUri());
+
+        if (resource.exists() && resource.isReadable()) {
+            return resource;
+        } else {
+            throw new RuntimeException("Could not read file: " + user.getResumePath());
+        }
+    }
+
+    public void deleteResume(Long userId) throws IOException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        if (user.getResumePath() == null) {
+            throw new RuntimeException("Resume not found for user");
+        }
+
+        // Delete file
+        Files.deleteIfExists(Paths.get(user.getResumePath()));
+
+        // Update user
+        user.setResumePath(null);
+        user.setResumeName(null);
+        userRepository.save(user);
+    }
+
+    public User getUserById(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
     }
 }
