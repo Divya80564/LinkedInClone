@@ -48,6 +48,18 @@ public class User implements UserDetails {
     @Column(name = "resume_name")
     private String resumeName;
 
+    @Column(name = "parsed_resume_text", columnDefinition = "TEXT")
+    private String parsedResumeText;
+
+    // Add getter and setter
+    public String getParsedResumeText() {
+        return parsedResumeText;
+    }
+
+    public void setParsedResumeText(String parsedResumeText) {
+        this.parsedResumeText = parsedResumeText;
+    }
+
     // One-to-one relationship with Profile (CASCADE enabled)
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @JsonIgnore

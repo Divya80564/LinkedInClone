@@ -9,7 +9,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
+import com.divya.linkedinclone.dto.ParsedResumeResponse;
+import org.springframework.http.HttpStatus;
 import java.io.IOException;
 import java.util.Map;
 import java.util.HashMap;
@@ -71,6 +72,17 @@ public class ResumeController {
         } catch (IOException e) {
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to delete resume"));
+        }
+    }
+
+    @GetMapping("/parsed")
+    public ResponseEntity<?> getParsedResume(@PathVariable Long userId) {
+        try {
+            String parsedContent = userService.parseResumeContent(userId);
+            return ResponseEntity.ok(new ParsedResumeResponse(userId, parsedContent));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 }

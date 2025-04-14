@@ -3,42 +3,36 @@ package com.divya.linkedinclone.service;
 import com.divya.linkedinclone.dto.UserRegistrationRequest;
 import com.divya.linkedinclone.entity.Profile;
 import com.divya.linkedinclone.entity.User;
+import com.divya.linkedinclone.entity.VerificationToken;
+import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.UserRepository;
+import org.apache.tika.exception.TikaException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
-import com.divya.linkedinclone.exception.UserNotFoundException;
-import java.util.Set;
-import java.util.List;
-import com.divya.linkedinclone.entity.VerificationToken;
-import com.divya.linkedinclone.service.VerificationTokenService;
-import com.divya.linkedinclone.service.EmailService;
-import com.divya.linkedinclone.service.ProfileService;
+import org.springframework.web.multipart.MultipartFile;
+import org.xml.sax.SAXException;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Collections;
-import java.util.Optional;
-import java.util.Map;
 import java.util.HashMap;
-import java.util.stream.Collectors;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
-import org.springframework.util.StringUtils;
-import org.springframework.web.multipart.MultipartFile;
-import java.nio.file.*;
-import java.nio.file.StandardCopyOption;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
-import com.divya.linkedinclone.entity.User;
-
-
+import java.util.stream.Collectors;
 
 @Service
 public class UserService implements UserDetailsService {
@@ -53,10 +47,13 @@ public class UserService implements UserDetailsService {
     private VerificationTokenService verificationTokenService;
 
     @Autowired
-    private EmailService emailService; // We'll create this next
+    private EmailService emailService;
 
     @Autowired
-    private ProfileService profileService; // Inject ProfileService
+    private ProfileService profileService;
+
+    @Autowired
+    private ResumeParserService resumeParserService;
 
     @Value("${resume.upload.directory}")
     private String resumeUploadDirectory;
@@ -82,7 +79,7 @@ public class UserService implements UserDetailsService {
         // Send verification email
         emailService.sendVerificationEmail(savedUser, verificationToken.getToken());
 
-        // Create profile (existing code)
+        // Create profile
         Profile profile = new Profile();
         profile.setBio("");
         profile.setProfilePicture("");
@@ -142,7 +139,7 @@ public class UserService implements UserDetailsService {
         );
     }
 
-    // Add these methods to UserService.java
+    // Get all users for admin view
     public List<Map<String, Object>> getAllUsersForAdmin() {
         List<User> users = userRepository.findAll();
         return users.stream()
@@ -169,7 +166,6 @@ public class UserService implements UserDetailsService {
         return userMap;
     }
 
-
     public void deleteUserByAdmin(Long userId) {
         if (!userRepository.existsById(userId)) {
             throw new UserNotFoundException("User not found with id: " + userId);
@@ -177,7 +173,7 @@ public class UserService implements UserDetailsService {
         userRepository.deleteById(userId);
     }
 
-    // .\service\UserService.java (add these methods)
+    // Password reset functionality
     public void initiatePasswordReset(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UserNotFoundException("User not found with email: " + email));
@@ -208,6 +204,7 @@ public class UserService implements UserDetailsService {
         verificationTokenService.deleteToken(passwordResetToken);
     }
 
+    // Resume handling methods
     public User uploadResume(Long userId, MultipartFile file) throws IOException {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
@@ -246,6 +243,16 @@ public class UserService implements UserDetailsService {
         // Update user with new resume info
         user.setResumePath(filePath.toString());
         user.setResumeName(originalFilename);
+
+        // Parse the resume content
+        try {
+            String parsedContent = resumeParserService.parseResume(filePath);
+            user.setParsedResumeText(parsedContent);
+        } catch (TikaException | SAXException e) {
+            // Log the error but don't fail the upload
+            System.err.println("Failed to parse resume content: " + e.getMessage());
+        }
+
         return userRepository.save(user);
     }
 
@@ -281,11 +288,36 @@ public class UserService implements UserDetailsService {
         // Update user
         user.setResumePath(null);
         user.setResumeName(null);
+        user.setParsedResumeText(null);
         userRepository.save(user);
     }
 
     public User getUserById(Long userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+    }
+
+    public String parseResumeContent(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+
+        if (user.getResumePath() == null) {
+            throw new RuntimeException("Resume file not found");
+        }
+
+        try {
+            Path filePath = Paths.get(user.getResumePath());
+            String parsedContent = resumeParserService.parseResume(filePath);
+
+            // Store parsed content in database
+            user.setParsedResumeText(parsedContent);
+            userRepository.save(user);
+
+            return parsedContent;
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read resume file", e);
+        } catch (TikaException | SAXException e) {
+            throw new RuntimeException("Failed to parse resume content", e);
+        }
     }
 }
