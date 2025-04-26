@@ -7,6 +7,8 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import com.divya.linkedinclone.dto.ParsedResumeData;
+
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.divya.linkedinclone.dto.ParsedResumeResponse;
@@ -82,6 +84,19 @@ public class ResumeController {
             return ResponseEntity.ok(new ParsedResumeResponse(userId, parsedContent));
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Update ResumeController.java
+
+    @PostMapping("/parse")
+    public ResponseEntity<?> parseResume(@PathVariable Long userId) {
+        try {
+            ParsedResumeData parsedData = userService.parseUserResume(userId);
+            return ResponseEntity.ok(parsedData);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest()
                     .body(Map.of("error", e.getMessage()));
         }
     }

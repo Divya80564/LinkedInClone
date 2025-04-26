@@ -7,6 +7,8 @@ import com.divya.linkedinclone.entity.VerificationToken;
 import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.UserRepository;
 import org.apache.tika.exception.TikaException;
+import com.divya.linkedinclone.dto.ParsedResumeData;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -246,11 +248,12 @@ public class UserService implements UserDetailsService {
 
         // Parse the resume content
         try {
-            String parsedContent = resumeParserService.parseResume(filePath);
-            user.setParsedResumeText(parsedContent);
-        } catch (TikaException | SAXException e) {
-            // Log the error but don't fail the upload
+            ParsedResumeData parsedData = resumeParserService.parseResume(filePath);
+            user.setParsedResumeText(formatParsedData(parsedData));
+        } catch (Exception e) {
+            // If parsing fails, just store the file without parsed content
             System.err.println("Failed to parse resume content: " + e.getMessage());
+            user.setParsedResumeText("");
         }
 
         return userRepository.save(user);
@@ -307,17 +310,66 @@ public class UserService implements UserDetailsService {
 
         try {
             Path filePath = Paths.get(user.getResumePath());
-            String parsedContent = resumeParserService.parseResume(filePath);
+            ParsedResumeData parsedData = resumeParserService.parseResume(filePath);
+            String formattedData = formatParsedData(parsedData);
 
             // Store parsed content in database
-            user.setParsedResumeText(parsedContent);
+            user.setParsedResumeText(formattedData);
             userRepository.save(user);
 
-            return parsedContent;
+            return formattedData;
         } catch (IOException e) {
             throw new RuntimeException("Failed to read resume file", e);
         } catch (TikaException | SAXException e) {
             throw new RuntimeException("Failed to parse resume content", e);
         }
     }
+
+    public ParsedResumeData parseUserResume(Long userId) {
+        User user = getUserById(userId);
+
+        if (user.getResumePath() == null) {
+            throw new RuntimeException("No resume uploaded for user");
+        }
+
+        try {
+            Path filePath = Paths.get(user.getResumePath());
+            ParsedResumeData parsedData = resumeParserService.parseResume(filePath);
+
+            // Update user with parsed data
+            user.setParsedResumeText(formatParsedData(parsedData));
+            userRepository.save(user);
+
+            return parsedData;
+        } catch (IOException | TikaException | SAXException e) {
+            throw new RuntimeException("Failed to parse resume", e);
+        }
+    }
+
+    private String formatParsedData(ParsedResumeData data) {
+        StringBuilder sb = new StringBuilder();
+        if (data.getName() != null && !data.getName().isEmpty()) {
+            sb.append("Name: ").append(data.getName()).append("\n");
+        }
+        if (data.getEmail() != null && !data.getEmail().isEmpty()) {
+            sb.append("Email: ").append(data.getEmail()).append("\n");
+        }
+        if (data.getPhone() != null && !data.getPhone().isEmpty()) {
+            sb.append("Phone: ").append(data.getPhone()).append("\n");
+        }
+        if (data.getSkills() != null && !data.getSkills().isEmpty()) {
+            sb.append("Skills: ").append(data.getSkills()).append("\n");
+        }
+        if (data.getEducation() != null && !data.getEducation().isEmpty()) {
+            sb.append("Education: ").append(data.getEducation()).append("\n");
+        }
+        if (data.getExperience() != null && !data.getExperience().isEmpty()) {
+            sb.append("Experience: ").append(data.getExperience()).append("\n");
+        }
+        if (data.getSummary() != null && !data.getSummary().isEmpty()) {
+            sb.append("Summary: ").append(data.getSummary());
+        }
+        return sb.toString();
+    }
+
 }
