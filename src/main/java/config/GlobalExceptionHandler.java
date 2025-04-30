@@ -2,7 +2,7 @@ package com.divya.linkedinclone.config;
 import com.divya.linkedinclone.exception.CommentNotFoundException;
 import com.divya.linkedinclone.exception.ProfileNotFoundException;
 import com.divya.linkedinclone.exception.PostNotFoundException;
-
+import com.divya.linkedinclone.exception.NoResumeContentException;
 import com.divya.linkedinclone.exception.UserNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +47,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(CommentNotFoundException.class)
     public ResponseEntity<?> handleCommentNotFoundException(CommentNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", ex.getMessage()));
+    }
+
+    // .\config\GlobalExceptionHandler.java (add this method)
+    @ExceptionHandler(NoResumeContentException.class)
+    public ResponseEntity<?> handleNoResumeContentException(NoResumeContentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", ex.getMessage()));
     }
 
 }

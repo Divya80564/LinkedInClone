@@ -9,7 +9,13 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import com.divya.linkedinclone.dto.ParsedResumeData;
 import com.divya.linkedinclone.dto.ResumeScoreResponse;
-
+import com.divya.linkedinclone.dto.ResumeSuggestionResponse;
+import com.divya.linkedinclone.service.ResumeAnalysisService;
+import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.divya.linkedinclone.dto.ParsedResumeResponse;
@@ -27,6 +33,9 @@ public class ResumeController {
 
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private ResumeAnalysisService resumeAnalysisService;
 
     @PostMapping
     public ResponseEntity<?> uploadResume(
@@ -116,6 +125,17 @@ public class ResumeController {
         } catch (RuntimeException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // .\controller\ResumeController.java (add this method)
+    @GetMapping("/suggestions")
+    public ResponseEntity<?> getResumeSuggestions(@PathVariable Long userId) {
+        try {
+            ResumeSuggestionResponse response = resumeAnalysisService.analyzeResume(userId);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
 }

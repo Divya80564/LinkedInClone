@@ -259,6 +259,7 @@ public class UserService implements UserDetailsService {
             System.err.println("Failed to parse resume content: " + e.getMessage());
             user.setParsedResumeText("");
         }
+        user.setResumeVersion(UUID.randomUUID().toString());
 
         return userRepository.save(user);
     }

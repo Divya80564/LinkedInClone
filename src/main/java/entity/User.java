@@ -51,6 +51,16 @@ public class User implements UserDetails {
     @Column(name = "parsed_resume_text", columnDefinition = "TEXT")
     private String parsedResumeText;
 
+    @Column(name = "resume_version")
+    private String resumeVersion;
+
+    public String getResumeVersion() {
+        return resumeVersion;
+    }
+
+    public void setResumeVersion(String resumeVersion) {
+        this.resumeVersion = resumeVersion;
+    }
     // Add getter and setter
     public String getParsedResumeText() {
         return parsedResumeText;
