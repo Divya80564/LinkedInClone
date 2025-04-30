@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import com.divya.linkedinclone.dto.ParsedResumeData;
+import com.divya.linkedinclone.dto.ResumeScoreResponse;
 
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -97,6 +98,23 @@ public class ResumeController {
             return ResponseEntity.ok(parsedData);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest()
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Add to .\controller\ResumeController.java
+    @GetMapping("/score")
+    public ResponseEntity<?> scoreResume(@PathVariable Long userId) {
+        try {
+            int score = userService.scoreResume(userId);
+            return ResponseEntity.ok(new ResumeScoreResponse(
+                    userId,
+                    score,
+                    "Resume scored successfully",
+                    userService.getScoreBreakdown(userId) // Optional detailed breakdown
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", e.getMessage()));
         }
     }

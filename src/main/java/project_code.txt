@@ -869,6 +869,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import com.divya.linkedinclone.dto.ParsedResumeData;
+import com.divya.linkedinclone.dto.ResumeScoreResponse;
 
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -958,6 +959,23 @@ public class ResumeController {
             return ResponseEntity.ok(parsedData);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest()
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // Add to .\controller\ResumeController.java
+    @GetMapping("/score")
+    public ResponseEntity<?> scoreResume(@PathVariable Long userId) {
+        try {
+            int score = userService.scoreResume(userId);
+            return ResponseEntity.ok(new ResumeScoreResponse(
+                    userId,
+                    score,
+                    "Resume scored successfully",
+                    userService.getScoreBreakdown(userId) // Optional detailed breakdown
+            ));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", e.getMessage()));
         }
     }
@@ -1630,6 +1648,36 @@ public class ResumeResponse {
     }
 }
 
+===== .\dto\ResumeScoreResponse.java =====
+
+// .\dto\ResumeScoreResponse.java
+package com.divya.linkedinclone.dto;
+
+import lombok.Getter;
+import lombok.Setter;
+
+@Getter
+@Setter
+public class ResumeScoreResponse {
+    private Long userId;
+    private int score;
+    private String message;
+    private String breakdown; // Optional: detailed breakdown of scoring
+
+    public ResumeScoreResponse(Long userId, int score, String message) {
+        this.userId = userId;
+        this.score = score;
+        this.message = message;
+    }
+
+    public ResumeScoreResponse(Long userId, int score, String message, String breakdown) {
+        this.userId = userId;
+        this.score = score;
+        this.message = message;
+        this.breakdown = breakdown;
+    }
+}
+
 ===== .\dto\UserRegistrationRequest.java =====
 
 package com.divya.linkedinclone.dto;
@@ -2151,6 +2199,11 @@ public class User implements UserDetails {
     }
 
     @Override
+    public String getPassword() {
+        return this.password;
+    }
+
+    @Override
     public String getUsername() {
         return this.email;
     }
@@ -2186,6 +2239,19 @@ public class User implements UserDetails {
     @Override
     public int hashCode() {
         return getClass().hashCode();
+    }
+
+    // Add to .\entity\User.java
+    @Column(name = "score_breakdown", columnDefinition = "TEXT")
+    private String scoreBreakdown;
+
+    // Add getter and setter
+    public String getScoreBreakdown() {
+        return scoreBreakdown;
+    }
+
+    public void setScoreBreakdown(String scoreBreakdown) {
+        this.scoreBreakdown = scoreBreakdown;
     }
 }
 
@@ -3514,85 +3580,63 @@ public class ResumeParserService {
     private static final Pattern PHONE_PATTERN =
             Pattern.compile("\\b(\\+\\d{1,3}[- ]?)?\\d{10}\\b");
 
+    // In ResumeParserService.java
     public ParsedResumeData parseResume(Path filePath) throws IOException, TikaException, SAXException {
         try {
             Parser parser = new AutoDetectParser();
-            BodyContentHandler handler = new BodyContentHandler(-1);
+            BodyContentHandler handler = new BodyContentHandler(-1); // -1 for no write limit
             Metadata metadata = new Metadata();
             ParseContext context = new ParseContext();
 
             try (InputStream stream = Files.newInputStream(filePath)) {
                 parser.parse(stream, handler, metadata, context);
 
+                // Get the full text content
                 String content = handler.toString();
+
+                // Create response object with all fields
                 ParsedResumeData data = new ParsedResumeData();
-
-                // Extract from metadata first
-                data.setName(metadata.get("dc:title") != null ? metadata.get("dc:title") :
-                        metadata.get("meta:author") != null ? metadata.get("meta:author") :
-                                extractNameFromContent(content));
-
-                // Safely extract email and phone
-                String email = extractEmail(content);
-                String phone = extractPhone(content);
-
-                data.setEmail(email != null ? email : "");
-                data.setPhone(phone != null ? phone : "");
-
-                // Extract sections with null checks
-                String skills = safeExtractSection(content, "skills|technical skills|key skills");
-                String education = safeExtractSection(content, "education|academic background");
-                String experience = safeExtractSection(content, "experience|work history");
-                String summary = safeExtractSection(content, "summary|profile|about");
-
-                data.setSkills(skills != null ? skills : "");
-                data.setEducation(education != null ? education : "");
-                data.setExperience(experience != null ? experience : "");
-                data.setSummary(summary != null ? summary : "");
+                data.setName(extractName(content, metadata));
+                data.setEmail(extractEmail(content));
+                data.setPhone(extractPhone(content));
+                data.setSkills(extractSection(content, "SKILLS"));
+                data.setEducation(extractSection(content, "EDUCATION"));
+                data.setExperience(extractSection(content, "EXPERIENCE"));
+                data.setSummary(content.substring(0, Math.min(500, content.length()))); // First 500 chars as summary
 
                 return data;
             }
         } catch (Exception e) {
-            // Return empty data if parsing fails
-            ParsedResumeData data = new ParsedResumeData();
-            data.setName("");
-            data.setEmail("");
-            data.setPhone("");
-            data.setSkills("");
-            data.setEducation("");
-            data.setExperience("");
-            data.setSummary("");
-            return data;
+            throw new RuntimeException("Failed to parse resume: " + e.getMessage(), e);
         }
     }
 
-    private String extractEmail(String content) {
-        Matcher matcher = EMAIL_PATTERN.matcher(content);
-        return matcher.find() ? matcher.group() : null;
-    }
+    private String extractName(String content, Metadata metadata) {
+        // Try metadata first
+        String name = metadata.get("dc:title");
+        if (name == null) name = metadata.get("meta:author");
 
-    private String extractPhone(String content) {
-        Matcher matcher = PHONE_PATTERN.matcher(content);
-        return matcher.find() ? matcher.group() : null;
-    }
-
-    private String extractNameFromContent(String content) {
-        if (content == null || content.isEmpty()) {
-            return "";
+        // Fallback to content analysis
+        if (name == null || name.isEmpty()) {
+            String[] lines = content.split("\n");
+            if (lines.length > 0) {
+                // First line that looks like a name (contains uppercase words)
+                for (String line : lines) {
+                    if (line.matches("^[A-Z][a-zA-Z ]+$")) {
+                        return line.trim();
+                    }
+                }
+            }
         }
-        String[] lines = content.split("\n");
-        return lines.length > 0 && lines[0] != null ? lines[0].trim() : "";
+        return name != null ? name : "";
     }
 
-    private String safeExtractSection(String content, String sectionPattern) {
-        if (content == null || content.isEmpty()) {
-            return "";
-        }
-
-        Pattern pattern = Pattern.compile("(?i)" + sectionPattern + "[\\s\\-:]*\\n(.*?)(?=\\n\\s*\\n|$)",
+    private String extractSection(String content, String sectionTitle) {
+        // Case-insensitive section matching
+        Pattern pattern = Pattern.compile("(?i)" + sectionTitle + "[\\s\\-:]*\\n(.*?)(?=\\n\\s*\\n|$)",
                 Pattern.DOTALL);
         Matcher matcher = pattern.matcher(content);
-        return matcher.find() && matcher.group(1) != null ? matcher.group(1).trim() : "";
+        return matcher.find() ? matcher.group(1).trim() : "";
     }
 }
 
@@ -3608,6 +3652,9 @@ import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.UserRepository;
 import org.apache.tika.exception.TikaException;
 import com.divya.linkedinclone.dto.ParsedResumeData;
+import java.util.Arrays;
+import java.util.stream.Stream;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -3970,6 +4017,132 @@ public class UserService implements UserDetailsService {
             sb.append("Summary: ").append(data.getSummary());
         }
         return sb.toString();
+    }
+
+    // Add to .\service\UserService.java
+
+    // Section keywords with synonyms
+    private static final List<String> SKILLS_KEYWORDS = Arrays.asList(
+            "skills", "technical skills", "key skills", "technologies",
+            "technical expertise", "competencies"
+    );
+
+    private static final List<String> EXPERIENCE_KEYWORDS = Arrays.asList(
+            "experience", "work history", "employment history",
+            "professional experience", "work experience"
+    );
+
+    private static final List<String> EDUCATION_KEYWORDS = Arrays.asList(
+            "education", "academics", "qualifications",
+            "educational background", "degrees"
+    );
+
+    private static final List<String> PROJECTS_KEYWORDS = Arrays.asList(
+            "projects", "key projects", "selected projects",
+            "project experience", "project work"
+    );
+
+    // In UserService.java
+    // In UserService.java
+    public int scoreResume(Long userId) {
+        User user = getUserById(userId);
+
+        if (user.getResumePath() == null) {
+            throw new RuntimeException("No resume uploaded for user");
+        }
+
+        // Force re-parse if empty or null
+        if (user.getParsedResumeText() == null || user.getParsedResumeText().isEmpty()) {
+            parseResumeContent(userId);
+            user = getUserById(userId); // Refresh user object
+        }
+
+        String resumeText = user.getParsedResumeText().toLowerCase();
+        StringBuilder breakdown = new StringBuilder();
+        int score = 0;
+
+        // 1. Check for Skills Section (30 points)
+        if (resumeText.contains("skills")) {
+            score += 30;
+            breakdown.append("Skills section found (+30)\n");
+
+            // Bonus for number of skills listed
+            String skillsSection = extractSection(resumeText, "skills");
+            int skillCount = skillsSection.split("[,•]").length;
+            int skillBonus = Math.min(10, skillCount / 2); // +1 for every 2 skills, max +10
+            score += skillBonus;
+            breakdown.append(String.format("%d skills listed (+%d)\n", skillCount, skillBonus));
+        }
+
+        // 2. Check for Experience Section (30 points)
+        if (resumeText.contains("experience")) {
+            score += 30;
+            breakdown.append("Experience section found (+30)\n");
+
+            // Bonus for job entries
+            String expSection = extractSection(resumeText, "experience");
+            int jobCount = expSection.split("\\d{2}/\\d{4} - ").length - 1;
+            int expBonus = Math.min(15, jobCount * 5); // +5 per job, max +15
+            score += expBonus;
+            breakdown.append(String.format("%d job positions listed (+%d)\n", jobCount, expBonus));
+        }
+
+        // 3. Check for Education Section (20 points)
+        if (resumeText.contains("education")) {
+            score += 20;
+            breakdown.append("Education section found (+20)\n");
+        }
+
+        // 4. Check for Projects Section (10 points)
+        if (resumeText.contains("projects")) {
+            score += 10;
+            breakdown.append("Projects section found (+10)\n");
+        }
+
+        // 5. Keyword Density Bonus (10 points max)
+        List<String> keywords = Arrays.asList(
+                "java", "spring", "graphql", "api", "database",
+                "optimization", "microservice", "security", "scalability"
+        );
+        long keywordMatches = keywords.stream()
+                .filter(resumeText::contains)
+                .count();
+        int keywordBonus = Math.min(10, (int)keywordMatches * 2);
+        score += keywordBonus;
+        breakdown.append(String.format("%d technical keywords matched (+%d)\n", keywordMatches, keywordBonus));
+
+        // Cap at 100
+        score = Math.min(score, 100);
+
+        // Store breakdown
+        user.setScoreBreakdown(breakdown.toString());
+        userRepository.save(user);
+
+        return score;
+    }
+
+    public String getScoreBreakdown(Long userId) {
+        User user = getUserById(userId);
+        return user.getScoreBreakdown();
+    }
+
+    private boolean containsAny(String text, List<String> keywords) {
+        return keywords.stream().anyMatch(text::contains);
+    }
+
+    private int countKeywords(String text, List<String> keywords) {
+        return (int) keywords.stream()
+                .filter(text::contains)
+                .count();
+    }
+
+    // In UserService.java
+    private String extractSection(String content, String sectionTitle) {
+        // Case-insensitive section matching
+        Pattern pattern = Pattern.compile("(?i)" + sectionTitle + "[\\s\\-:]*\\n(.*?)(?=\\n\\s*\\n|$)",
+                Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(content);
+        return matcher.find() ? matcher.group(1).trim() : "";
     }
 
 }

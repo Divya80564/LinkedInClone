@@ -123,6 +123,11 @@ public class User implements UserDetails {
     }
 
     @Override
+    public String getPassword() {
+        return this.password;
+    }
+
+    @Override
     public String getUsername() {
         return this.email;
     }
@@ -158,5 +163,18 @@ public class User implements UserDetails {
     @Override
     public int hashCode() {
         return getClass().hashCode();
+    }
+
+    // Add to .\entity\User.java
+    @Column(name = "score_breakdown", columnDefinition = "TEXT")
+    private String scoreBreakdown;
+
+    // Add getter and setter
+    public String getScoreBreakdown() {
+        return scoreBreakdown;
+    }
+
+    public void setScoreBreakdown(String scoreBreakdown) {
+        this.scoreBreakdown = scoreBreakdown;
     }
 }
