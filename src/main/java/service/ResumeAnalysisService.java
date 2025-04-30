@@ -1,7 +1,7 @@
-// .\service\ResumeAnalysisService.java
 package com.divya.linkedinclone.service;
 
 import com.divya.linkedinclone.dto.ResumeSuggestionResponse;
+import com.divya.linkedinclone.dto.SkillGapResponse;
 import com.divya.linkedinclone.entity.User;
 import com.divya.linkedinclone.exception.UserNotFoundException;
 import com.divya.linkedinclone.repository.UserRepository;
@@ -15,6 +15,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Collections;
+
 
 @Service
 public class ResumeAnalysisService {
@@ -182,5 +187,65 @@ public class ResumeAnalysisService {
 
     private String capitalize(String str) {
         return str.substring(0, 1).toUpperCase() + str.substring(1);
+    }
+
+    public SkillGapResponse analyzeSkillGap(Long userId, String targetRole) {
+        // 1. Fetch user and validate resume data
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
+
+        if (user.getParsedResumeText() == null || user.getParsedResumeText().isEmpty()) {
+            throw new NoResumeContentException("No parsed resume found");
+        }
+
+        // 2. Extract skills from resume and profile
+        Set<String> userSkills = extractSkills(user);
+
+        // 3. Fetch required skills for the target role (hardcoded for now)
+        Set<String> requiredSkills = getRequiredSkillsForRole(targetRole);
+
+        // 4. Identify missing skills
+        List<String> missingSkills = requiredSkills.stream()
+                .filter(skill -> !userSkills.contains(skill))
+                .collect(Collectors.toList());
+
+        return new SkillGapResponse(
+                userId,
+                targetRole,
+                missingSkills,
+                "Skill gap analysis completed"
+        );
+    }
+
+    private Set<String> extractSkills(User user) {
+        Set<String> skills = new HashSet<>();
+
+        // Extract from parsed resume (e.g., "Skills: Java, Spring, SQL")
+        if (user.getParsedResumeText() != null) {
+            String[] resumeSkills = user.getParsedResumeText()
+                    .toLowerCase()
+                    .split("skills:")[1]  // Assumes "Skills:" section exists
+                    .split("[,\n]");      // Split by commas or newlines
+            skills.addAll(Arrays.asList(resumeSkills));
+        }
+
+        // Extract from profile (if exists)
+        if (user.getProfile() != null && user.getProfile().getSkills() != null) {
+            skills.addAll(Arrays.asList(user.getProfile().getSkills().split(",")));
+        }
+
+        return skills.stream()
+                .map(String::trim)
+                .filter(skill -> !skill.isEmpty())
+                .collect(Collectors.toSet());
+    }
+
+    // Hardcoded role-to-skills mapping (replace with DB/API later)
+    private Set<String> getRequiredSkillsForRole(String role) {
+        Map<String, Set<String>> roleSkills = Map.of(
+                "Java Developer", Set.of("Java", "Spring Boot", "Hibernate", "SQL", "Microservices"),
+                "Frontend Developer", Set.of("JavaScript", "React", "HTML", "CSS", "TypeScript")
+        );
+        return roleSkills.getOrDefault(role, Collections.emptySet());
     }
 }

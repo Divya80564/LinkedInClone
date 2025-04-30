@@ -12,6 +12,9 @@ import com.divya.linkedinclone.dto.ResumeScoreResponse;
 import com.divya.linkedinclone.dto.ResumeSuggestionResponse;
 import com.divya.linkedinclone.service.ResumeAnalysisService;
 import java.util.Map;
+import com.divya.linkedinclone.dto.SkillGapResponse;  // Add this import
+import com.divya.linkedinclone.exception.UserNotFoundException;  // Add this import
+import com.divya.linkedinclone.exception.NoResumeContentException;  // Add this import
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -136,6 +139,23 @@ public class ResumeController {
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/skill-gap")
+    public ResponseEntity<?> analyzeSkillGap(
+            @PathVariable Long userId,
+            @RequestParam(required = true) String role
+    ) {
+        try {
+            SkillGapResponse response = resumeAnalysisService.analyzeSkillGap(userId, role);
+            return ResponseEntity.ok(response);
+        } catch (UserNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (NoResumeContentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
     }
 }
